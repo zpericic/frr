@@ -493,12 +493,13 @@ void nhrp_gre_update(ZAPI_CALLBACK_ARGS)
 	STREAM_GETL(s, gre_info.okey);
 	STREAM_GETL(s, gre_info.ifindex_link);
 	STREAM_GETL(s, gre_info.vrfid_link);
-	STREAM_GETL(s, gre_info.vtep_ip.s_addr);
-	STREAM_GETL(s, gre_info.vtep_ip_remote.s_addr);
 	if (gre_info.ifindex == IFINDEX_INTERNAL)
 		val = NULL;
-	else
+	else {
 		val = hash_lookup(nhrp_gre_list, &gre_info);
+		STREAM_GETL(s, gre_info.vtep_ip.s_addr);
+		STREAM_GETL(s, gre_info.vtep_ip_remote.s_addr);
+	}
 	if (val) {
 		if (gre_info.vtep_ip.s_addr != val->vtep_ip.s_addr ||
 		    gre_info.vrfid_link != val->vrfid_link ||
