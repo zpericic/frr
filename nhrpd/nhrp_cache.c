@@ -167,12 +167,14 @@ void nhrp_cache_interface_del(struct interface *ifp)
 	if (nifp->cache_hash) {
 		hash_iterate(nifp->cache_hash, do_nhrp_cache_free, NULL);
 		hash_free(nifp->cache_hash);
+		nifp->cache_hash = NULL;
 	}
 
 	if (nifp->cache_config_hash) {
 		hash_iterate(nifp->cache_config_hash, do_nhrp_cache_config_free,
 			     NULL);
 		hash_free(nifp->cache_config_hash);
+		nifp->cache_config_hash = NULL;
 	}
 }
 
