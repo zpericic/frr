@@ -46,6 +46,7 @@ static const struct message interface_flags_desc[] = {
 	{NHRP_IFF_SHORTCUT, "shortcut"},
 	{NHRP_IFF_REDIRECT, "redirect"},
 	{NHRP_IFF_REG_NO_UNIQUE, "registration no-unique"},
+	{NHRP_IFF_COLLECT_MD, "collect-md"},
 	{0}};
 
 static int nhrp_vty_return(struct vty *vty, int ret)
@@ -369,34 +370,44 @@ DEFUN(if_no_nhrp_network_id, if_no_nhrp_network_id_cmd,
 }
 
 DEFUN(if_nhrp_flags, if_nhrp_flags_cmd,
-	AFI_CMD " nhrp <shortcut|redirect>",
+	AFI_CMD " nhrp <shortcut|redirect|collect-md>",
 	AFI_STR
 	NHRP_STR
 	"Allow shortcut establishment\n"
-	"Send redirect notifications\n")
+	"Send redirect notifications\n"
+	"Use LWT collect_md mode for encap routes\n")
 {
 	VTY_DECLVAR_CONTEXT(interface, ifp);
 	struct nhrp_interface *nifp = ifp->info;
 	afi_t afi = cmd_to_afi(argv[0]);
+	int ret;
 
-	return toggle_flag(vty, interface_flags_desc, argv[2]->text, 1,
-			   &nifp->afi[afi].flags);
+	ret = toggle_flag(vty, interface_flags_desc, argv[2]->text, 1,
+			  &nifp->afi[afi].flags);
+	if (ret == CMD_SUCCESS && strcmp(argv[2]->text, "collect-md") == 0)
+		nhrp_cache_flush_routes(ifp);
+	return ret;
 }
 
 DEFUN(if_no_nhrp_flags, if_no_nhrp_flags_cmd,
-	"no " AFI_CMD " nhrp <shortcut|redirect>",
+	"no " AFI_CMD " nhrp <shortcut|redirect|collect-md>",
 	NO_STR
 	AFI_STR
 	NHRP_STR
 	"Allow shortcut establishment\n"
-	"Send redirect notifications\n")
+	"Send redirect notifications\n"
+	"Use LWT collect_md mode for encap routes\n")
 {
 	VTY_DECLVAR_CONTEXT(interface, ifp);
 	struct nhrp_interface *nifp = ifp->info;
 	afi_t afi = cmd_to_afi(argv[1]);
+	int ret;
 
-	return toggle_flag(vty, interface_flags_desc, argv[3]->text, 0,
-			   &nifp->afi[afi].flags);
+	ret = toggle_flag(vty, interface_flags_desc, argv[3]->text, 0,
+			  &nifp->afi[afi].flags);
+	if (ret == CMD_SUCCESS && strcmp(argv[3]->text, "collect-md") == 0)
+		nhrp_cache_flush_routes(ifp);
+	return ret;
 }
 
 DEFUN(if_nhrp_reg_flags, if_nhrp_reg_flags_cmd,
@@ -829,15 +840,21 @@ static void show_ip_nhrp_cache(struct nhrp_cache *c, void *pctx)
 		else
 			json_object_string_add(json, "identity", "-");
 
+		if (nhrp_cache_use_collect_md(c))
+			json_object_boolean_true_add(json, "collectMd");
+		else
+			json_object_boolean_false_add(json, "collectMd");
+
 		json_object_array_add(ctx->json, json);
 		return;
 	}
-	vty_out(ctx->vty, "%-8s %-8s %-24s %-24s %-24s %c%c%c    %s\n",
+	vty_out(ctx->vty, "%-8s %-8s %-24s %-24s %-24s %c%c%c%c   %s\n",
 		c->ifp->name,
 		nhrp_cache_type_str[c->cur.type],
 		buf[0], buf[1], buf[2],
 		c->used ? 'U' : ' ', c->t_timeout ? 'T' : ' ',
 		c->t_auth ? 'A' : ' ',
+		nhrp_cache_use_collect_md(c) ? 'E' : ' ',
 		c->cur.peer ? c->cur.peer->vc->remote.id : "-");
 }
 

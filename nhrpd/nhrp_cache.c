@@ -10,6 +10,7 @@
 #include "nhrpd.h"
 
 #include "netlink.h"
+#include "os.h"
 
 DEFINE_MTYPE_STATIC(NHRPD, NHRP_CACHE, "NHRP cache entry");
 DEFINE_MTYPE_STATIC(NHRPD, NHRP_CACHE_CONFIG, "NHRP cache config entry");
@@ -68,6 +69,15 @@ static void nhrp_cache_free(struct nhrp_cache *c)
 	struct nhrp_interface *nifp = c->ifp->info;
 
 	debugf(NHRP_DEBUG_COMMON, "Deleting cache entry");
+
+	if (c->route_installed && nhrp_cache_use_collect_md(c)) {
+		struct prefix pfx;
+
+		if (sockunion2hostprefix(&c->remote_addr, &pfx))
+			os_route_encap_update(0, c->ifp->ifindex, &pfx,
+					      NULL, 0);
+	}
+
 	nhrp_cache_counts[c->cur.type]--;
 	notifier_call(&c->notifier_list, NOTIFY_CACHE_DELETE);
 	assert(!notifier_active(&c->notifier_list));
@@ -208,41 +218,70 @@ static void nhrp_cache_do_timeout(struct event *t)
 					  NULL);
 }
 
+bool nhrp_cache_use_collect_md(struct nhrp_cache *c)
+{
+	struct nhrp_interface *nifp = c->ifp->info;
+	afi_t afi = family2afi(sockunion_family(&c->remote_addr));
+
+	return nifp->collect_md ||
+	       (nifp->afi[afi].flags & NHRP_IFF_COLLECT_MD);
+}
+
 static void nhrp_cache_update_route(struct nhrp_cache *c)
 {
 	struct prefix pfx;
 	struct nhrp_peer *p = c->cur.peer;
 	struct nhrp_interface *nifp;
+	bool use_collect_md = nhrp_cache_use_collect_md(c);
+	const union sockunion *nbma;
 
 	if (!sockunion2hostprefix(&c->remote_addr, &pfx))
 		return;
 
 	if (p && nhrp_peer_check(p, 1)) {
-		if (sockunion_family(&c->cur.remote_nbma_natoa) != AF_UNSPEC) {
-			/* remote_nbma_natoa is already set. Therefore, binding
-			 * should be updated to this value and not vc's remote
-			 * nbma.
-			 */
-			debugf(NHRP_DEBUG_COMMON,
-			       "cache (remote_nbma_natoa set): Update binding for %pSU dev %s from (deleted) peer.vc.nbma %pSU to %pSU",
-			       &c->remote_addr, p->ifp->name,
-			       &p->vc->remote.nbma, &c->cur.remote_nbma_natoa);
+		/* Determine the NBMA address to use */
+		if (sockunion_family(&c->cur.remote_nbma_natoa) != AF_UNSPEC)
+			nbma = &c->cur.remote_nbma_natoa;
+		else
+			nbma = &p->vc->remote.nbma;
 
-			netlink_update_binding(p->ifp, &c->remote_addr,
-					       &c->cur.remote_nbma_natoa);
+		if (use_collect_md) {
+			/* collect_md: install route with LWT encap directly */
+			nifp = p->ifp->info;
+			debugf(NHRP_DEBUG_COMMON,
+			       "cache (collect_md): encap route for %pSU dev %s nbma %pSU",
+			       &c->remote_addr, p->ifp->name, nbma);
+
+			os_route_encap_update(1, p->ifp->ifindex, &pfx, nbma,
+					      nifp->o_grekey);
 		} else {
-			/* update binding to peer->vc->remote->nbma */
-			debugf(NHRP_DEBUG_COMMON,
-			       "cache (remote_nbma_natoa unspec): Update binding for %pSU dev %s from (deleted) to peer.vc.nbma %pSU",
-			       &c->remote_addr, p->ifp->name,
-			       &p->vc->remote.nbma);
+			/* Classic mode: neighbor binding + zebra route */
+			if (sockunion_family(&c->cur.remote_nbma_natoa) !=
+			    AF_UNSPEC) {
+				debugf(NHRP_DEBUG_COMMON,
+				       "cache (remote_nbma_natoa set): Update binding for %pSU dev %s from (deleted) peer.vc.nbma %pSU to %pSU",
+				       &c->remote_addr, p->ifp->name,
+				       &p->vc->remote.nbma,
+				       &c->cur.remote_nbma_natoa);
 
-			netlink_update_binding(p->ifp, &c->remote_addr,
-					       &p->vc->remote.nbma);
+				netlink_update_binding(
+					p->ifp, &c->remote_addr,
+					&c->cur.remote_nbma_natoa);
+			} else {
+				debugf(NHRP_DEBUG_COMMON,
+				       "cache (remote_nbma_natoa unspec): Update binding for %pSU dev %s from (deleted) to peer.vc.nbma %pSU",
+				       &c->remote_addr, p->ifp->name,
+				       &p->vc->remote.nbma);
+
+				netlink_update_binding(p->ifp,
+						       &c->remote_addr,
+						       &p->vc->remote.nbma);
+			}
+
+			nhrp_route_announce(1, c->cur.type, &pfx, c->ifp, NULL,
+					    c->cur.mtu);
 		}
 
-		nhrp_route_announce(1, c->cur.type, &pfx, c->ifp, NULL,
-				    c->cur.mtu);
 		if (c->cur.type >= NHRP_CACHE_DYNAMIC) {
 			nhrp_route_update_nhrp(&pfx, c->ifp);
 			c->nhrp_route_installed = 1;
@@ -273,8 +312,12 @@ static void nhrp_cache_update_route(struct nhrp_cache *c)
 		if (c->route_installed) {
 			assert(sockunion2hostprefix(&c->remote_addr, &pfx));
 			notifier_call(&c->notifier_list, NOTIFY_CACHE_DOWN);
-			nhrp_route_announce(0, c->cur.type, &pfx, NULL, NULL,
-					    0);
+			if (use_collect_md)
+				os_route_encap_update(0, c->ifp->ifindex, &pfx,
+						      NULL, 0);
+			else
+				nhrp_route_announce(0, c->cur.type, &pfx, NULL,
+						    NULL, 0);
 			c->route_installed = 0;
 		}
 	}
@@ -350,9 +393,12 @@ static void nhrp_cache_authorize_binding(struct nhrp_reqid *r, void *arg)
 	nhrp_reqid_free(&nhrp_event_reqid, r);
 
 	if (arg && strcmp(arg, "accept") == 0) {
+		bool use_collect_md = nhrp_cache_use_collect_md(c);
+
 		if (c->cur.peer) {
-			netlink_update_binding(c->cur.peer->ifp,
-					       &c->remote_addr, NULL);
+			if (!use_collect_md)
+				netlink_update_binding(c->cur.peer->ifp,
+						       &c->remote_addr, NULL);
 			nhrp_peer_notify_del(c->cur.peer, &c->peer_notifier);
 			nhrp_peer_unref(c->cur.peer);
 		}
@@ -365,7 +411,8 @@ static void nhrp_cache_authorize_binding(struct nhrp_reqid *r, void *arg)
 			nhrp_peer_notify_add(c->cur.peer, &c->peer_notifier,
 					     nhrp_cache_peer_notifier);
 
-		if (sockunion_family(&c->cur.remote_nbma_natoa) != AF_UNSPEC) {
+		if (!use_collect_md &&
+		    sockunion_family(&c->cur.remote_nbma_natoa) != AF_UNSPEC) {
 			debugf(NHRP_DEBUG_COMMON,
 			       "cache: update binding for %pSU dev %s from (deleted) peer.vc.nbma %s to %pSU",
 			       &c->remote_addr, c->ifp->name,
@@ -561,6 +608,30 @@ void nhrp_cache_config_foreach(struct interface *ifp,
 
 	if (nifp->cache_config_hash)
 		hash_iterate(nifp->cache_config_hash, nhrp_cache_config_iterator, &ic);
+}
+
+static void nhrp_cache_flush_route_cb(struct nhrp_cache *c, void *ctx)
+{
+	struct prefix pfx;
+
+	if (!c->route_installed)
+		return;
+
+	if (!sockunion2hostprefix(&c->remote_addr, &pfx))
+		return;
+
+	/* Remove route via both paths -- one will be a no-op */
+	nhrp_route_announce(0, c->cur.type, &pfx, NULL, NULL, 0);
+	os_route_encap_update(0, c->ifp->ifindex, &pfx, NULL, 0);
+	c->route_installed = 0;
+
+	/* Reinstall with the now-current mode */
+	nhrp_cache_update_route(c);
+}
+
+void nhrp_cache_flush_routes(struct interface *ifp)
+{
+	nhrp_cache_foreach(ifp, nhrp_cache_flush_route_cb, NULL);
 }
 
 void nhrp_cache_notify_add(struct nhrp_cache *c, struct notifier_block *n,

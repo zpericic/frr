@@ -505,6 +505,7 @@ int nhrp_gre_update(ZAPI_CALLBACK_ARGS)
 	STREAM_GETL(s, gre_info.vrfid_link);
 	STREAM_GETL(s, gre_info.vtep_ip.s_addr);
 	STREAM_GETL(s, gre_info.vtep_ip_remote.s_addr);
+	STREAM_GETC(s, gre_info.collect_md);
 	if (gre_info.ifindex == IFINDEX_INTERNAL)
 		val = NULL;
 	else
@@ -514,7 +515,8 @@ int nhrp_gre_update(ZAPI_CALLBACK_ARGS)
 		    gre_info.vrfid_link != val->vrfid_link ||
 		    gre_info.ifindex_link != val->ifindex_link ||
 		    gre_info.ikey != val->ikey ||
-		    gre_info.okey != val->okey) {
+		    gre_info.okey != val->okey ||
+		    gre_info.collect_md != val->collect_md) {
 			/* update */
 			memcpy(val, &gre_info, sizeof(struct nhrp_gre_info));
 		}
@@ -522,8 +524,10 @@ int nhrp_gre_update(ZAPI_CALLBACK_ARGS)
 		val = nhrp_gre_info_alloc(&gre_info);
 	}
 	ifp = if_lookup_by_index(gre_info.ifindex, vrf_id);
-	debugf(NHRP_DEBUG_EVENT, "%s: gre interface %d vr %d obtained from system",
-	       ifp ? ifp->name : "<none>", gre_info.ifindex, vrf_id);
+	debugf(NHRP_DEBUG_EVENT,
+	       "%s: gre interface %d vr %d obtained from system (collect_md=%d)",
+	       ifp ? ifp->name : "<none>", gre_info.ifindex, vrf_id,
+	       gre_info.collect_md);
 	if (ifp)
 		nhrp_interface_update_nbma(ifp, val);
 	return 0;
