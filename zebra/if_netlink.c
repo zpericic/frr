@@ -23,6 +23,11 @@
 #include <linux/if_bridge.h>
 #include <linux/if_link.h>
 #include <linux/if_tunnel.h>
+#ifndef IFLA_GRE_COLLECT_METADATA
+#define IFLA_GRE_COLLECT_METADATA 18
+#undef IFLA_GRE_MAX
+#define IFLA_GRE_MAX IFLA_GRE_COLLECT_METADATA
+#endif
 #include <net/if_arp.h>
 #include <linux/sockios.h>
 #include <linux/ethtool.h>
@@ -387,6 +392,10 @@ netlink_gre_set_msg_encoder(struct zebra_dplane_ctx *ctx, void *buf,
 	    !nl_attr_put16(&req->n, buflen, IFLA_GRE_ENCAP_FLAGS, gre_info->encap_flags))
 		return 0;
 
+	if (gre_info->collect_md &&
+	    !nl_attr_put(&req->n, buflen, IFLA_GRE_COLLECT_METADATA, NULL, 0))
+		return 0;
+
 	nl_attr_nest_end(&req->n, rta_data);
 	nl_attr_nest_end(&req->n, rta_info);
 
@@ -493,6 +502,8 @@ static int netlink_extract_gre_info(struct rtattr *link_data, struct zebra_l2inf
 		gre_info->ttl = *(uint8_t *)RTA_DATA(attr[IFLA_GRE_TTL]);
 	if (attr[IFLA_GRE_TOS])
 		gre_info->tos = *(uint8_t *)RTA_DATA(attr[IFLA_GRE_TOS]);
+	if (attr[IFLA_GRE_COLLECT_METADATA])
+		gre_info->collect_md = 1;
 	return 0;
 }
 
