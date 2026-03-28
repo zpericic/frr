@@ -310,12 +310,14 @@ DECLARE_DLIST(nhrp_reglist, struct nhrp_registration, reglist_entry);
 #define NHRP_IFF_SHORTCUT		0x0001
 #define NHRP_IFF_REDIRECT		0x0002
 #define NHRP_IFF_REG_NO_UNIQUE		0x0100
+#define NHRP_IFF_COLLECT_MD		0x0200
 
 struct nhrp_interface {
 	struct interface *ifp;
 
 	struct zbuf *auth_token;
 	unsigned enabled : 1;
+	unsigned collect_md : 1;
 
 	char *ipsec_profile, *ipsec_fallback_profile, *source;
 	union sockunion nbma;
@@ -347,6 +349,14 @@ struct nhrp_interface {
 	} afi[AFI_MAX];
 };
 
+/* Check if collect_md is active: either auto-detected from kernel or CLI */
+static inline bool nhrp_if_collect_md(struct nhrp_interface *nifp)
+{
+	return nifp->collect_md ||
+	       (nifp->afi[AFI_IP].flags & NHRP_IFF_COLLECT_MD) ||
+	       (nifp->afi[AFI_IP6].flags & NHRP_IFF_COLLECT_MD);
+}
+
 struct nhrp_gre_info {
 	ifindex_t ifindex;
 	struct in_addr vtep_ip; /* IFLA_GRE_LOCAL */
@@ -357,6 +367,7 @@ struct nhrp_gre_info {
 				 * linked with GRE
 				 */
 	vrf_id_t vrfid_link;
+	uint8_t collect_md; /* IFLA_GRE_COLLECT_METADATA */
 };
 
 extern struct zebra_privs_t nhrpd_privs;
@@ -451,6 +462,8 @@ int nhrp_cache_update_binding(struct nhrp_cache *, enum nhrp_cache_type type,
 			      int holding_time, struct nhrp_peer *p,
 			      uint32_t mtu, union sockunion *nbma_natoa,
 			      union sockunion *claimed_nbma);
+bool nhrp_cache_use_collect_md(struct nhrp_cache *c);
+void nhrp_cache_flush_routes(struct interface *ifp);
 void nhrp_cache_notify_add(struct nhrp_cache *c, struct notifier_block *n, notifier_fn_t fn);
 void nhrp_cache_notify_del(struct nhrp_cache *c, struct notifier_block *n);
 
