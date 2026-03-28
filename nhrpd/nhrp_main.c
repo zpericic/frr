@@ -92,6 +92,7 @@ static FRR_NORETURN void nhrp_request_stop(void)
 	nhrp_interface_terminate();
 	vrf_terminate();
 	nhrp_vc_terminate();
+	os_gre_socket_close();
 	os_route_socket_close();
 
 	debugf(NHRP_DEBUG_COMMON, "Done.");
