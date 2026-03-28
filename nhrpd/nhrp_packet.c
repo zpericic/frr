@@ -9,9 +9,11 @@
 
 #include <netinet/if_ether.h>
 #include "nhrpd.h"
+#include "os.h"
 #include "zbuf.h"
 #include "frrevent.h"
 #include "hash.h"
+#include "vrf.h"
 
 #include "nhrp_protocol.h"
 #include "os.h"
@@ -396,8 +398,85 @@ err:
 	zbuf_free(zb);
 }
 
+static struct interface *nhrp_find_gre_by_underlay(int underlay_ifindex)
+{
+	struct vrf *vrf = vrf_lookup_by_id(VRF_DEFAULT);
+	struct interface *ifp;
+
+	FOR_ALL_INTERFACES (vrf, ifp) {
+		struct nhrp_interface *nifp = ifp->info;
+
+		if (!nifp)
+			continue;
+		if (!nhrp_if_collect_md(nifp))
+			continue;
+		if (nifp->nbmaifp &&
+		    (int)nifp->nbmaifp->ifindex == underlay_ifindex)
+			return ifp;
+	}
+	return NULL;
+}
+
+static void nhrp_packet_recv_gre(struct event *t)
+{
+	int fd = EVENT_FD(t);
+	struct zbuf *zb;
+	struct interface *ifp;
+	struct nhrp_peer *p;
+	union sockunion remote_nbma;
+	int underlay_ifindex;
+	size_t len;
+
+	event_add_read(master, nhrp_packet_recv_gre, 0, fd, NULL);
+
+	zb = zbuf_alloc(1500);
+	if (!zb)
+		return;
+
+	len = zbuf_size(zb);
+	if (os_gre_recvmsg(zb->buf, &len, &remote_nbma,
+			   &underlay_ifindex) < 0)
+		goto err;
+
+	zb->head = zb->buf;
+	zb->tail = zb->buf + len;
+
+	debugf(NHRP_DEBUG_KERNEL,
+	       "GRE recv: from %pSU underlay_if %d len %zu",
+	       &remote_nbma, underlay_ifindex, len);
+
+	if (sockunion_family(&remote_nbma) != AF_INET)
+		goto err;
+
+	ifp = nhrp_find_gre_by_underlay(underlay_ifindex);
+	if (!ifp) {
+		debugf(NHRP_DEBUG_KERNEL,
+		       "GRE recv: no GRE interface for underlay ifindex %d",
+		       underlay_ifindex);
+		goto err;
+	}
+
+	p = nhrp_peer_get(ifp, &remote_nbma);
+	if (!p)
+		goto err;
+
+	nhrp_peer_recv(p, zb);
+	nhrp_peer_unref(p);
+	return;
+
+err:
+	zbuf_free(zb);
+}
+
 int nhrp_packet_init(void)
 {
+	int gre_fd;
+
 	event_add_read(master, nhrp_packet_recvraw, 0, os_socket(), NULL);
+
+	gre_fd = os_gre_socket();
+	if (gre_fd >= 0)
+		event_add_read(master, nhrp_packet_recv_gre, 0, gre_fd, NULL);
+
 	return 0;
 }
