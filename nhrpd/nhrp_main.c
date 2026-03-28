@@ -23,6 +23,7 @@
 
 #include "nhrpd.h"
 #include "nhrp_errors.h"
+#include "os.h"
 
 DEFINE_MGROUP(NHRPD, "NHRP");
 
@@ -90,6 +91,7 @@ static FRR_NORETURN void nhrp_request_stop(void)
 	nhrp_interface_terminate();
 	vrf_terminate();
 	nhrp_vc_terminate();
+	os_route_socket_close();
 
 	debugf(NHRP_DEBUG_COMMON, "Done.");
 
@@ -159,6 +161,7 @@ int main(int argc, char **argv)
 	assert(nhrpd_privs.change);
 	nhrpd_privs.change(ZPRIVS_RAISE);
 
+	os_route_socket();
 	nhrp_vc_init();
 	nhrp_packet_init();
 	vici_init();

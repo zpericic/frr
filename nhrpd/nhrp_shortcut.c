@@ -13,6 +13,7 @@
 #include "frrevent.h"
 #include "log.h"
 #include "nhrp_protocol.h"
+#include "os.h"
 
 DEFINE_MTYPE_STATIC(NHRPD, NHRP_SHORTCUT, "NHRP shortcut");
 
@@ -44,6 +45,31 @@ static void nhrp_shortcut_do_expire(struct event *t)
 	nhrp_shortcut_check_use(s);
 }
 
+static bool nhrp_shortcut_use_collect_md(struct nhrp_shortcut *s)
+{
+	struct nhrp_cache *c = s->cache;
+	struct nhrp_interface *nifp;
+	afi_t afi;
+
+	if (!c || !c->ifp)
+		return false;
+
+	nifp = c->ifp->info;
+	afi = family2afi(s->p->family);
+
+	return nifp->collect_md ||
+	       (nifp->afi[afi].flags & NHRP_IFF_COLLECT_MD);
+}
+
+static const union sockunion *nhrp_cache_nbma(struct nhrp_cache *c)
+{
+	if (sockunion_family(&c->cur.remote_nbma_natoa) != AF_UNSPEC)
+		return &c->cur.remote_nbma_natoa;
+	if (c->cur.peer)
+		return &c->cur.peer->vc->remote.nbma;
+	return NULL;
+}
+
 static void nhrp_shortcut_cache_notify(struct notifier_block *n,
 				       unsigned long cmd)
 {
@@ -59,8 +85,21 @@ static void nhrp_shortcut_cache_notify(struct notifier_block *n,
 			       s->p, &c->remote_addr,
 			       c && c->ifp ? c->ifp->name : "<unk>");
 
-			nhrp_route_announce(1, s->type, s->p, c ? c->ifp : NULL,
-					    c ? &c->remote_addr : NULL, 0);
+			if (nhrp_shortcut_use_collect_md(s)) {
+				const union sockunion *nbma =
+					nhrp_cache_nbma(c);
+				struct nhrp_interface *nifp = c->ifp->info;
+
+				if (nbma)
+					os_route_encap_update(
+						1, c->ifp->ifindex, s->p,
+						nbma, nifp->o_grekey);
+			} else {
+				nhrp_route_announce(1, s->type, s->p,
+						    c ? c->ifp : NULL,
+						    c ? &c->remote_addr : NULL,
+						    0);
+			}
 			s->route_installed = 1;
 		}
 		break;
@@ -70,8 +109,13 @@ static void nhrp_shortcut_cache_notify(struct notifier_block *n,
 	case NOTIFY_CACHE_DOWN:
 	case NOTIFY_CACHE_DELETE:
 		if (s->route_installed) {
-			nhrp_route_announce(0, NHRP_CACHE_INVALID, s->p, NULL,
-					    NULL, 0);
+			if (nhrp_shortcut_use_collect_md(s))
+				os_route_encap_update(
+					0, c && c->ifp ? c->ifp->ifindex : 0,
+					s->p, NULL, 0);
+			else
+				nhrp_route_announce(0, NHRP_CACHE_INVALID, s->p,
+						    NULL, NULL, 0);
 			s->route_installed = 0;
 		}
 		if (cmd == NOTIFY_CACHE_DELETE)
