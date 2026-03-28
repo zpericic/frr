@@ -83,6 +83,7 @@ struct zebra_l2info_gre {
 				 * linked with GRE
 				 */
 	ns_id_t link_nsid;
+	uint8_t collect_md; /* IFLA_GRE_COLLECT_METADATA */
 };
 
 struct zebra_vxlan_vni {
