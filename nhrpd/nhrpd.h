@@ -359,8 +359,10 @@ static inline bool nhrp_if_collect_md(struct nhrp_interface *nifp)
 
 struct nhrp_gre_info {
 	ifindex_t ifindex;
-	struct in_addr vtep_ip; /* IFLA_GRE_LOCAL */
-	struct in_addr vtep_ip_remote; /* IFLA_GRE_REMOTE */
+	struct in_addr vtep_ip; /* IFLA_GRE_LOCAL (gre) */
+	struct in_addr vtep_ip_remote; /* IFLA_GRE_REMOTE (gre) */
+	struct in6_addr vtep_ip6; /* IFLA_GRE_LOCAL (ip6gre) */
+	struct in6_addr vtep_ip6_remote; /* IFLA_GRE_REMOTE (ip6gre) */
 	uint32_t ikey;
 	uint32_t okey;
 	ifindex_t ifindex_link; /* Interface index of interface
@@ -368,6 +370,7 @@ struct nhrp_gre_info {
 				 */
 	vrf_id_t vrfid_link;
 	uint8_t collect_md; /* IFLA_GRE_COLLECT_METADATA */
+	uint8_t ip6;	    /* true if ip6gre */
 };
 
 extern struct zebra_privs_t nhrpd_privs;

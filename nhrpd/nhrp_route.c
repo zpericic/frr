@@ -506,6 +506,11 @@ int nhrp_gre_update(ZAPI_CALLBACK_ARGS)
 	STREAM_GETL(s, gre_info.vtep_ip.s_addr);
 	STREAM_GETL(s, gre_info.vtep_ip_remote.s_addr);
 	STREAM_GETC(s, gre_info.collect_md);
+	STREAM_GETC(s, gre_info.ip6);
+	if (gre_info.ip6) {
+		STREAM_GET(&gre_info.vtep_ip6, s, 16);
+		STREAM_GET(&gre_info.vtep_ip6_remote, s, 16);
+	}
 	if (gre_info.ifindex == IFINDEX_INTERNAL)
 		val = NULL;
 	else
@@ -516,7 +521,8 @@ int nhrp_gre_update(ZAPI_CALLBACK_ARGS)
 		    gre_info.ifindex_link != val->ifindex_link ||
 		    gre_info.ikey != val->ikey ||
 		    gre_info.okey != val->okey ||
-		    gre_info.collect_md != val->collect_md) {
+		    gre_info.collect_md != val->collect_md ||
+		    gre_info.ip6 != val->ip6) {
 			/* update */
 			memcpy(val, &gre_info, sizeof(struct nhrp_gre_info));
 		}

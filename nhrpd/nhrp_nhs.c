@@ -318,8 +318,13 @@ static void nhrp_nhs_resolve_cb(struct resolver_query *q, const char *errstr,
 static void nhrp_nhs_resolve(struct event *t)
 {
 	struct nhrp_nhs *nhs = EVENT_ARG(t);
+	struct nhrp_interface *nifp = nhs->ifp->info;
+	int af = AF_INET;
 
-	resolver_resolve(&nhs->dns_resolve, AF_INET, VRF_DEFAULT,
+	if (sockunion_family(&nifp->nbma) == AF_INET6)
+		af = AF_INET6;
+
+	resolver_resolve(&nhs->dns_resolve, af, VRF_DEFAULT,
 			 nhs->nbma_fqdn, nhrp_nhs_resolve_cb);
 }
 
