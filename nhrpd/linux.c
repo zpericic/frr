@@ -7,6 +7,7 @@
 
 #include <fcntl.h>
 #include <errno.h>
+#include <netinet/ip.h>
 #include <linux/if_packet.h>
 #include <linux/lwtunnel.h>
 #include <linux/rtnetlink.h>
@@ -23,6 +24,7 @@ size_t strlcpy(char *__restrict dest,
 
 static int nhrp_socket_fd = -1;
 static int nhrp_route_fd = -1;
+static int nhrp_gre_fd = -1;
 
 int os_socket(void)
 {
@@ -96,6 +98,200 @@ int os_recvmsg(uint8_t *buf, size_t *len, int *ifindex, uint8_t *addr,
 			*addrlen = lladdr.sll_halen;
 		} else {
 			*addrlen = 0;
+		}
+	}
+
+	return 0;
+}
+
+/* GRE key flag (bit 2 in flags field) */
+#define GRE_KEY_FLAG	0x2000
+
+int os_gre_socket(void)
+{
+	int fd, on = 1;
+
+	if (nhrp_gre_fd >= 0)
+		return nhrp_gre_fd;
+
+	fd = socket(AF_INET, SOCK_RAW, IPPROTO_GRE);
+	if (fd < 0) {
+		zlog_err("os_gre_socket: socket(): %s", safe_strerror(errno));
+		return -1;
+	}
+
+	if (setsockopt(fd, IPPROTO_IP, IP_PKTINFO, &on, sizeof(on)) < 0) {
+		zlog_err("os_gre_socket: IP_PKTINFO: %s", safe_strerror(errno));
+		close(fd);
+		return -1;
+	}
+
+	nhrp_gre_fd = fd;
+	return fd;
+}
+
+void os_gre_socket_close(void)
+{
+	if (nhrp_gre_fd >= 0) {
+		close(nhrp_gre_fd);
+		nhrp_gre_fd = -1;
+	}
+}
+
+int os_gre_sendmsg(const uint8_t *buf, size_t len,
+		   const union sockunion *src_nbma,
+		   const union sockunion *dst_nbma,
+		   uint32_t grekey)
+{
+	struct sockaddr_in dst;
+	uint8_t gre_hdr[8];
+	int gre_hdr_len;
+	struct iovec iov[2];
+	uint8_t cmsgbuf[CMSG_SPACE(sizeof(struct in_pktinfo))];
+	struct msghdr msg;
+	struct cmsghdr *cmsg;
+	struct in_pktinfo *pktinfo;
+	int ret;
+
+	if (nhrp_gre_fd < 0)
+		return -1;
+
+	if (sockunion_family(dst_nbma) != AF_INET)
+		return -1;
+
+	/* Build GRE header */
+	if (grekey) {
+		uint16_t flags = htons(GRE_KEY_FLAG);
+		uint16_t proto = htons(ETH_P_NHRP);
+		uint32_t key = htonl(grekey);
+
+		memcpy(gre_hdr, &flags, 2);
+		memcpy(gre_hdr + 2, &proto, 2);
+		memcpy(gre_hdr + 4, &key, 4);
+		gre_hdr_len = 8;
+	} else {
+		uint16_t flags = 0;
+		uint16_t proto = htons(ETH_P_NHRP);
+
+		memcpy(gre_hdr, &flags, 2);
+		memcpy(gre_hdr + 2, &proto, 2);
+		gre_hdr_len = 4;
+	}
+
+	iov[0].iov_base = gre_hdr;
+	iov[0].iov_len = gre_hdr_len;
+	iov[1].iov_base = (void *)buf;
+	iov[1].iov_len = len;
+
+	memset(&dst, 0, sizeof(dst));
+	dst.sin_family = AF_INET;
+	dst.sin_addr.s_addr = sockunion2ip(dst_nbma);
+
+	memset(&msg, 0, sizeof(msg));
+	msg.msg_name = &dst;
+	msg.msg_namelen = sizeof(dst);
+	msg.msg_iov = iov;
+	msg.msg_iovlen = 2;
+
+	/* Set source address via IP_PKTINFO */
+	if (sockunion_family(src_nbma) == AF_INET) {
+		memset(cmsgbuf, 0, sizeof(cmsgbuf));
+		msg.msg_control = cmsgbuf;
+		msg.msg_controllen = sizeof(cmsgbuf);
+
+		cmsg = CMSG_FIRSTHDR(&msg);
+		cmsg->cmsg_level = IPPROTO_IP;
+		cmsg->cmsg_type = IP_PKTINFO;
+		cmsg->cmsg_len = CMSG_LEN(sizeof(struct in_pktinfo));
+
+		pktinfo = (struct in_pktinfo *)CMSG_DATA(cmsg);
+		pktinfo->ipi_spec_dst.s_addr = sockunion2ip(src_nbma);
+	}
+
+	debugf(NHRP_DEBUG_KERNEL, "os_gre_sendmsg: %pSU -> %pSU key %u len %zu",
+	       src_nbma, dst_nbma, grekey, len);
+
+	ret = sendmsg(nhrp_gre_fd, &msg, 0);
+	if (ret < 0) {
+		debugf(NHRP_DEBUG_KERNEL, "os_gre_sendmsg: failed: %s",
+		       safe_strerror(errno));
+		return -errno;
+	}
+
+	return 0;
+}
+
+int os_gre_recvmsg(uint8_t *buf, size_t *len, union sockunion *src_nbma,
+		   int *underlay_ifindex)
+{
+	uint8_t rxbuf[1600];
+	struct iovec iov = { .iov_base = rxbuf, .iov_len = sizeof(rxbuf) };
+	uint8_t cmsgbuf[CMSG_SPACE(sizeof(struct in_pktinfo))];
+	struct msghdr msg = {
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
+		.msg_control = cmsgbuf,
+		.msg_controllen = sizeof(cmsgbuf),
+	};
+	struct cmsghdr *cmsg;
+	struct in_pktinfo *pktinfo;
+	struct iphdr *iph;
+	uint16_t gre_flags, gre_proto;
+	int r, ip_hdr_len, gre_hdr_len, payload_off;
+
+	r = recvmsg(nhrp_gre_fd, &msg, MSG_DONTWAIT);
+	if (r < 0)
+		return -1;
+
+	/* Raw socket includes IP header */
+	if (r < (int)sizeof(struct iphdr))
+		return -1;
+
+	iph = (struct iphdr *)rxbuf;
+	ip_hdr_len = iph->ihl * 4;
+	if (r < ip_hdr_len + 4)
+		return -1;
+
+	/* Parse GRE header */
+	memcpy(&gre_flags, rxbuf + ip_hdr_len, 2);
+	memcpy(&gre_proto, rxbuf + ip_hdr_len + 2, 2);
+	gre_flags = ntohs(gre_flags);
+	gre_proto = ntohs(gre_proto);
+
+	if (gre_proto != ETH_P_NHRP)
+		return -1;
+
+	gre_hdr_len = 4;
+	if (gre_flags & 0x2000) /* Key present */
+		gre_hdr_len += 4;
+	if (gre_flags & 0x8000) /* Checksum present */
+		gre_hdr_len += 4;
+	if (gre_flags & 0x1000) /* Sequence present */
+		gre_hdr_len += 4;
+
+	payload_off = ip_hdr_len + gre_hdr_len;
+	if (r < payload_off)
+		return -1;
+
+	/* Copy NHRP payload */
+	*len = r - payload_off;
+	if (*len > 1500)
+		*len = 1500;
+	memcpy(buf, rxbuf + payload_off, *len);
+
+	/* Source NBMA from IP header */
+	sockunion_set(src_nbma, AF_INET,
+		      (uint8_t *)&iph->saddr, sizeof(iph->saddr));
+
+	/* Underlay ifindex from IP_PKTINFO */
+	*underlay_ifindex = 0;
+	for (cmsg = CMSG_FIRSTHDR(&msg); cmsg;
+	     cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+		if (cmsg->cmsg_level == IPPROTO_IP &&
+		    cmsg->cmsg_type == IP_PKTINFO) {
+			pktinfo = (struct in_pktinfo *)CMSG_DATA(cmsg);
+			*underlay_ifindex = pktinfo->ipi_ifindex;
+			break;
 		}
 	}
 

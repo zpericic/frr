@@ -350,6 +350,8 @@ void nhrp_peer_notify_del(struct nhrp_peer *p, struct notifier_block *n)
 
 void nhrp_peer_send(struct nhrp_peer *p, struct zbuf *zb)
 {
+	struct nhrp_interface *nifp = p->ifp->info;
+
 	nhrp_packet_debug(zb, "Send");
 
 	if (!p->online)
@@ -358,9 +360,16 @@ void nhrp_peer_send(struct nhrp_peer *p, struct zbuf *zb)
 	debugf(NHRP_DEBUG_KERNEL, "PACKET: Send %pSU -> %pSU",
 	       &p->vc->local.nbma, &p->vc->remote.nbma);
 
-	os_sendmsg(zb->head, zbuf_used(zb), p->ifp->ifindex,
-		   sockunion_get_addr(&p->vc->remote.nbma),
-		   sockunion_get_addrlen(&p->vc->remote.nbma), ETH_P_NHRP);
+	if (nhrp_if_collect_md(nifp)) {
+		os_gre_sendmsg(zb->head, zbuf_used(zb),
+			       &nifp->nbma, &p->vc->remote.nbma,
+			       nifp->o_grekey);
+	} else {
+		os_sendmsg(zb->head, zbuf_used(zb), p->ifp->ifindex,
+			   sockunion_get_addr(&p->vc->remote.nbma),
+			   sockunion_get_addrlen(&p->vc->remote.nbma),
+			   ETH_P_NHRP);
+	}
 	zbuf_reset(zb);
 }
 
