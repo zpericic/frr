@@ -3894,6 +3894,7 @@ static inline void zebra_gre_get(ZAPI_HANDLER_ARGS)
 		stream_putl(s, vrf_id_link);
 		stream_putl(s, gre_info->vtep_ip.ipaddr_v4.s_addr);
 		stream_putl(s, gre_info->vtep_ip_remote.ipaddr_v4.s_addr);
+		stream_putc(s, gre_info->collect_md);
 	} else {
 		/* XXX TODO: other tunnels kinds,
 		 * including IP6GRE tunnels should/should not  be handled
@@ -3905,6 +3906,7 @@ static inline void zebra_gre_get(ZAPI_HANDLER_ARGS)
 		stream_putl(s, VRF_UNKNOWN);
 		stream_putl(s, 0);
 		stream_putl(s, 0);
+		stream_putc(s, 0);
 	}
 	/* Write packet size. */
 	stream_putw_at(s, 0, stream_get_endp(s));
