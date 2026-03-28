@@ -3878,7 +3878,8 @@ static inline void zebra_gre_get(ZAPI_HANDLER_ARGS)
 
 	zclient_create_header(s, ZEBRA_GRE_UPDATE, vrf_id);
 
-	if (ifp && IS_ZEBRA_IF_GRE(ifp) && zebra_if) {
+	if (ifp && (IS_ZEBRA_IF_GRE(ifp) || IS_ZEBRA_IF_IP6GRE(ifp)) &&
+	    zebra_if) {
 		gre_info = &zebra_if->l2info.gre;
 
 		stream_putl(s, idx);
@@ -3895,6 +3896,12 @@ static inline void zebra_gre_get(ZAPI_HANDLER_ARGS)
 		stream_putl(s, gre_info->vtep_ip.ipaddr_v4.s_addr);
 		stream_putl(s, gre_info->vtep_ip_remote.ipaddr_v4.s_addr);
 		stream_putc(s, gre_info->collect_md);
+		/* IPv6 local/remote for ip6gre tunnels */
+		stream_putc(s, IS_IPADDR_V6(&gre_info->vtep_ip));
+		if (IS_IPADDR_V6(&gre_info->vtep_ip)) {
+			stream_put(s, &gre_info->vtep_ip.ipaddr_v6, 16);
+			stream_put(s, &gre_info->vtep_ip_remote.ipaddr_v6, 16);
+		}
 	} else {
 		/* XXX TODO: other tunnels kinds,
 		 * including IP6GRE tunnels should/should not  be handled
@@ -3907,6 +3914,7 @@ static inline void zebra_gre_get(ZAPI_HANDLER_ARGS)
 		stream_putl(s, 0);
 		stream_putl(s, 0);
 		stream_putc(s, 0);
+		stream_putc(s, 0); /* ip6 = false */
 	}
 	/* Write packet size. */
 	stream_putw_at(s, 0, stream_get_endp(s));
@@ -4077,8 +4085,7 @@ static inline void zebra_gre_source_set(ZAPI_HANDLER_ARGS)
 		return;
 	}
 
-	/* XXX TODO: other tunnels kinds should be handled */
-	if (!IS_ZEBRA_IF_GRE(ifp))
+	if (!IS_ZEBRA_IF_GRE(ifp) && !IS_ZEBRA_IF_IP6GRE(ifp))
 		return;
 
 	gre_zif = (struct zebra_if *)ifp->info;
