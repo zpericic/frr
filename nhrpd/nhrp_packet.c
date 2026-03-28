@@ -468,6 +468,53 @@ err:
 	zbuf_free(zb);
 }
 
+static void nhrp_packet_recv_gre6(struct event *t)
+{
+	int fd = EVENT_FD(t);
+	struct zbuf *zb;
+	struct interface *ifp;
+	struct nhrp_peer *p;
+	union sockunion remote_nbma;
+	int underlay_ifindex;
+	size_t len;
+
+	event_add_read(master, nhrp_packet_recv_gre6, 0, fd, NULL);
+
+	zb = zbuf_alloc(1500);
+	if (!zb)
+		return;
+
+	len = zbuf_size(zb);
+	if (os_gre6_recvmsg(zb->buf, &len, &remote_nbma,
+			    &underlay_ifindex) < 0)
+		goto err;
+
+	zb->head = zb->buf;
+	zb->tail = zb->buf + len;
+
+	debugf(NHRP_DEBUG_KERNEL,
+	       "GRE6 recv: from %pSU underlay_if %d len %zu",
+	       &remote_nbma, underlay_ifindex, len);
+
+	if (sockunion_family(&remote_nbma) != AF_INET6)
+		goto err;
+
+	ifp = nhrp_find_gre_by_underlay(underlay_ifindex);
+	if (!ifp)
+		goto err;
+
+	p = nhrp_peer_get(ifp, &remote_nbma);
+	if (!p)
+		goto err;
+
+	nhrp_peer_recv(p, zb);
+	nhrp_peer_unref(p);
+	return;
+
+err:
+	zbuf_free(zb);
+}
+
 int nhrp_packet_init(void)
 {
 	int gre_fd;
@@ -477,6 +524,10 @@ int nhrp_packet_init(void)
 	gre_fd = os_gre_socket();
 	if (gre_fd >= 0)
 		event_add_read(master, nhrp_packet_recv_gre, 0, gre_fd, NULL);
+
+	gre_fd = os_gre6_socket();
+	if (gre_fd >= 0)
+		event_add_read(master, nhrp_packet_recv_gre6, 0, gre_fd, NULL);
 
 	return 0;
 }
