@@ -25,6 +25,7 @@ size_t strlcpy(char *__restrict dest,
 static int nhrp_socket_fd = -1;
 static int nhrp_route_fd = -1;
 static int nhrp_gre_fd = -1;
+static int nhrp_gre6_fd = -1;
 
 int os_socket(void)
 {
@@ -136,30 +137,39 @@ void os_gre_socket_close(void)
 		close(nhrp_gre_fd);
 		nhrp_gre_fd = -1;
 	}
+	if (nhrp_gre6_fd >= 0) {
+		close(nhrp_gre6_fd);
+		nhrp_gre6_fd = -1;
+	}
 }
 
-int os_gre_sendmsg(const uint8_t *buf, size_t len,
-		   const union sockunion *src_nbma,
-		   const union sockunion *dst_nbma,
-		   uint32_t grekey)
+int os_gre6_socket(void)
 {
-	struct sockaddr_in dst;
-	uint8_t gre_hdr[8];
-	int gre_hdr_len;
-	struct iovec iov[2];
-	uint8_t cmsgbuf[CMSG_SPACE(sizeof(struct in_pktinfo))];
-	struct msghdr msg;
-	struct cmsghdr *cmsg;
-	struct in_pktinfo *pktinfo;
-	int ret;
+	int fd, on = 1;
 
-	if (nhrp_gre_fd < 0)
+	if (nhrp_gre6_fd >= 0)
+		return nhrp_gre6_fd;
+
+	fd = socket(AF_INET6, SOCK_RAW, IPPROTO_GRE);
+	if (fd < 0) {
+		zlog_err("os_gre6_socket: socket(): %s", safe_strerror(errno));
 		return -1;
+	}
 
-	if (sockunion_family(dst_nbma) != AF_INET)
+	if (setsockopt(fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &on,
+		       sizeof(on)) < 0) {
+		zlog_err("os_gre6_socket: IPV6_RECVPKTINFO: %s",
+			 safe_strerror(errno));
+		close(fd);
 		return -1;
+	}
 
-	/* Build GRE header */
+	nhrp_gre6_fd = fd;
+	return fd;
+}
+
+static int os_gre_build_hdr(uint8_t *gre_hdr, uint32_t grekey)
+{
 	if (grekey) {
 		uint16_t flags = htons(GRE_KEY_FLAG);
 		uint16_t proto = htons(ETH_P_NHRP);
@@ -168,50 +178,105 @@ int os_gre_sendmsg(const uint8_t *buf, size_t len,
 		memcpy(gre_hdr, &flags, 2);
 		memcpy(gre_hdr + 2, &proto, 2);
 		memcpy(gre_hdr + 4, &key, 4);
-		gre_hdr_len = 8;
-	} else {
-		uint16_t flags = 0;
-		uint16_t proto = htons(ETH_P_NHRP);
-
-		memcpy(gre_hdr, &flags, 2);
-		memcpy(gre_hdr + 2, &proto, 2);
-		gre_hdr_len = 4;
+		return 8;
 	}
+
+	uint16_t flags = 0;
+	uint16_t proto = htons(ETH_P_NHRP);
+
+	memcpy(gre_hdr, &flags, 2);
+	memcpy(gre_hdr + 2, &proto, 2);
+	return 4;
+}
+
+int os_gre_sendmsg(const uint8_t *buf, size_t len,
+		   const union sockunion *src_nbma,
+		   const union sockunion *dst_nbma,
+		   uint32_t grekey)
+{
+	uint8_t gre_hdr[8];
+	int gre_hdr_len;
+	struct iovec iov[2];
+	struct msghdr msg;
+	struct cmsghdr *cmsg;
+	int ret, fd;
+
+	debugf(NHRP_DEBUG_KERNEL, "os_gre_sendmsg: %pSU -> %pSU key %u len %zu",
+	       src_nbma, dst_nbma, grekey, len);
+
+	gre_hdr_len = os_gre_build_hdr(gre_hdr, grekey);
 
 	iov[0].iov_base = gre_hdr;
 	iov[0].iov_len = gre_hdr_len;
 	iov[1].iov_base = (void *)buf;
 	iov[1].iov_len = len;
 
-	memset(&dst, 0, sizeof(dst));
-	dst.sin_family = AF_INET;
-	dst.sin_addr.s_addr = sockunion2ip(dst_nbma);
-
 	memset(&msg, 0, sizeof(msg));
-	msg.msg_name = &dst;
-	msg.msg_namelen = sizeof(dst);
 	msg.msg_iov = iov;
 	msg.msg_iovlen = 2;
 
-	/* Set source address via IP_PKTINFO */
-	if (sockunion_family(src_nbma) == AF_INET) {
-		memset(cmsgbuf, 0, sizeof(cmsgbuf));
-		msg.msg_control = cmsgbuf;
-		msg.msg_controllen = sizeof(cmsgbuf);
+	if (sockunion_family(dst_nbma) == AF_INET) {
+		struct sockaddr_in dst;
+		uint8_t cmsgbuf[CMSG_SPACE(sizeof(struct in_pktinfo))];
 
-		cmsg = CMSG_FIRSTHDR(&msg);
-		cmsg->cmsg_level = IPPROTO_IP;
-		cmsg->cmsg_type = IP_PKTINFO;
-		cmsg->cmsg_len = CMSG_LEN(sizeof(struct in_pktinfo));
+		fd = nhrp_gre_fd;
+		if (fd < 0)
+			return -1;
 
-		pktinfo = (struct in_pktinfo *)CMSG_DATA(cmsg);
-		pktinfo->ipi_spec_dst.s_addr = sockunion2ip(src_nbma);
+		memset(&dst, 0, sizeof(dst));
+		dst.sin_family = AF_INET;
+		dst.sin_addr.s_addr = sockunion2ip(dst_nbma);
+		msg.msg_name = &dst;
+		msg.msg_namelen = sizeof(dst);
+
+		if (sockunion_family(src_nbma) == AF_INET) {
+			struct in_pktinfo *pktinfo;
+
+			memset(cmsgbuf, 0, sizeof(cmsgbuf));
+			msg.msg_control = cmsgbuf;
+			msg.msg_controllen = sizeof(cmsgbuf);
+			cmsg = CMSG_FIRSTHDR(&msg);
+			cmsg->cmsg_level = IPPROTO_IP;
+			cmsg->cmsg_type = IP_PKTINFO;
+			cmsg->cmsg_len = CMSG_LEN(sizeof(struct in_pktinfo));
+			pktinfo = (struct in_pktinfo *)CMSG_DATA(cmsg);
+			pktinfo->ipi_spec_dst.s_addr = sockunion2ip(src_nbma);
+		}
+
+		ret = sendmsg(fd, &msg, 0);
+	} else if (sockunion_family(dst_nbma) == AF_INET6) {
+		struct sockaddr_in6 dst6;
+		uint8_t cmsgbuf6[CMSG_SPACE(sizeof(struct in6_pktinfo))];
+
+		fd = nhrp_gre6_fd;
+		if (fd < 0)
+			return -1;
+
+		memset(&dst6, 0, sizeof(dst6));
+		dst6.sin6_family = AF_INET6;
+		dst6.sin6_addr = dst_nbma->sin6.sin6_addr;
+		msg.msg_name = &dst6;
+		msg.msg_namelen = sizeof(dst6);
+
+		if (sockunion_family(src_nbma) == AF_INET6) {
+			struct in6_pktinfo *pktinfo6;
+
+			memset(cmsgbuf6, 0, sizeof(cmsgbuf6));
+			msg.msg_control = cmsgbuf6;
+			msg.msg_controllen = sizeof(cmsgbuf6);
+			cmsg = CMSG_FIRSTHDR(&msg);
+			cmsg->cmsg_level = IPPROTO_IPV6;
+			cmsg->cmsg_type = IPV6_PKTINFO;
+			cmsg->cmsg_len = CMSG_LEN(sizeof(struct in6_pktinfo));
+			pktinfo6 = (struct in6_pktinfo *)CMSG_DATA(cmsg);
+			pktinfo6->ipi6_addr = src_nbma->sin6.sin6_addr;
+		}
+
+		ret = sendmsg(fd, &msg, 0);
+	} else {
+		return -1;
 	}
 
-	debugf(NHRP_DEBUG_KERNEL, "os_gre_sendmsg: %pSU -> %pSU key %u len %zu",
-	       src_nbma, dst_nbma, grekey, len);
-
-	ret = sendmsg(nhrp_gre_fd, &msg, 0);
 	if (ret < 0) {
 		debugf(NHRP_DEBUG_KERNEL, "os_gre_sendmsg: failed: %s",
 		       safe_strerror(errno));
@@ -291,6 +356,79 @@ int os_gre_recvmsg(uint8_t *buf, size_t *len, union sockunion *src_nbma,
 		    cmsg->cmsg_type == IP_PKTINFO) {
 			pktinfo = (struct in_pktinfo *)CMSG_DATA(cmsg);
 			*underlay_ifindex = pktinfo->ipi_ifindex;
+			break;
+		}
+	}
+
+	return 0;
+}
+
+int os_gre6_recvmsg(uint8_t *buf, size_t *len, union sockunion *src_nbma,
+		    int *underlay_ifindex)
+{
+	uint8_t rxbuf[1600];
+	struct sockaddr_in6 src6;
+	struct iovec iov = { .iov_base = rxbuf, .iov_len = sizeof(rxbuf) };
+	uint8_t cmsgbuf[CMSG_SPACE(sizeof(struct in6_pktinfo))];
+	struct msghdr msg = {
+		.msg_name = &src6,
+		.msg_namelen = sizeof(src6),
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
+		.msg_control = cmsgbuf,
+		.msg_controllen = sizeof(cmsgbuf),
+	};
+	struct cmsghdr *cmsg;
+	struct in6_pktinfo *pktinfo6;
+	uint16_t gre_flags, gre_proto;
+	int r, gre_hdr_len, payload_off;
+
+	r = recvmsg(nhrp_gre6_fd, &msg, MSG_DONTWAIT);
+	if (r < 0)
+		return -1;
+
+	/* IPv6 raw socket does NOT prepend IP header — data starts at GRE */
+	if (r < 4)
+		return -1;
+
+	/* Parse GRE header */
+	memcpy(&gre_flags, rxbuf, 2);
+	memcpy(&gre_proto, rxbuf + 2, 2);
+	gre_flags = ntohs(gre_flags);
+	gre_proto = ntohs(gre_proto);
+
+	if (gre_proto != ETH_P_NHRP)
+		return -1;
+
+	gre_hdr_len = 4;
+	if (gre_flags & 0x2000) /* Key */
+		gre_hdr_len += 4;
+	if (gre_flags & 0x8000) /* Checksum */
+		gre_hdr_len += 4;
+	if (gre_flags & 0x1000) /* Sequence */
+		gre_hdr_len += 4;
+
+	payload_off = gre_hdr_len;
+	if (r < payload_off)
+		return -1;
+
+	*len = r - payload_off;
+	if (*len > 1500)
+		*len = 1500;
+	memcpy(buf, rxbuf + payload_off, *len);
+
+	/* Source address from sockaddr */
+	sockunion_set(src_nbma, AF_INET6,
+		      (uint8_t *)&src6.sin6_addr, sizeof(src6.sin6_addr));
+
+	/* Underlay ifindex from IPV6_PKTINFO */
+	*underlay_ifindex = 0;
+	for (cmsg = CMSG_FIRSTHDR(&msg); cmsg;
+	     cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+		if (cmsg->cmsg_level == IPPROTO_IPV6 &&
+		    cmsg->cmsg_type == IPV6_PKTINFO) {
+			pktinfo6 = (struct in6_pktinfo *)CMSG_DATA(cmsg);
+			*underlay_ifindex = pktinfo6->ipi6_ifindex;
 			break;
 		}
 	}

@@ -202,7 +202,10 @@ static void nhrp_interface_interface_notifier(struct notifier_block *n,
 		nhrp_interface_update_nbma(nifp->ifp, NULL);
 		break;
 	case NOTIFY_INTERFACE_ADDRESS_CHANGED:
-		nifp->nbma = nbmanifp->afi[AFI_IP].addr;
+		if (sockunion_family(&nifp->nbma) == AF_INET6)
+			nifp->nbma = nbmanifp->afi[AFI_IP6].addr;
+		else
+			nifp->nbma = nbmanifp->afi[AFI_IP].addr;
 		nhrp_interface_update(nifp->ifp);
 		notifier_call(&nifp->notifier_list,
 			      NOTIFY_INTERFACE_NBMA_CHANGED);
@@ -225,7 +228,9 @@ void nhrp_interface_update_nbma(struct interface *ifp,
 	if (nifp->source)
 		nbmaifp = if_lookup_by_name(nifp->source, VRF_DEFAULT);
 
-	if (ifp->ll_type != ZEBRA_LLT_IPGRE && !gre_info) {
+	if (ifp->ll_type != ZEBRA_LLT_IPGRE &&
+	    ifp->ll_type != ZEBRA_LLT_IP6GRE &&
+	    !gre_info && !nhrp_if_collect_md(nifp)) {
 		debugf(NHRP_DEBUG_IF, "%s: Ignoring non GRE interface type %u",
 		       __func__, ifp->ll_type);
 	} else {
@@ -250,10 +255,15 @@ void nhrp_interface_update_nbma(struct interface *ifp,
 				nifp->link_vrf_id = gre_info->vrfid_link;
 		}
 
-		debugf(NHRP_DEBUG_IF, "%s: GRE: ikey=%x okey=%x link=%x saddr=%x collect_md=%d",
-		       ifp->name, nifp->i_grekey, nifp->o_grekey, 
-			   nifp->link_idx, saddr.s_addr, nifp->collect_md);
-		if (saddr.s_addr)
+		debugf(NHRP_DEBUG_IF, "%s: GRE: ikey=%x okey=%x link=%x saddr=%x collect_md=%d ip6=%d",
+		       ifp->name, nifp->i_grekey, nifp->o_grekey, nifp->link_idx,
+		       saddr.s_addr, nifp->collect_md, gre_info->ip6);
+		if (gre_info->ip6 &&
+		    !IN6_IS_ADDR_UNSPECIFIED(&gre_info->vtep_ip6))
+			sockunion_set(&nbma, AF_INET6,
+				      (uint8_t *)&gre_info->vtep_ip6,
+				      sizeof(gre_info->vtep_ip6));
+		else if (saddr.s_addr)
 			sockunion_set(&nbma, AF_INET,
 				      (uint8_t *)&saddr.s_addr,
 				      sizeof(saddr.s_addr));
@@ -288,8 +298,27 @@ void nhrp_interface_update_nbma(struct interface *ifp,
 	}
 
 	if (nbmaifp) {
-		if (sockunion_family(&nbma) == AF_UNSPEC)
-			nbma = nbmanifp->afi[AFI_IP].addr;
+		if (sockunion_family(&nbma) == AF_UNSPEC) {
+			bool is_ip6 = (gre_info && gre_info->ip6) ||
+				      ifp->ll_type == ZEBRA_LLT_IP6GRE;
+
+			/* If source has IPv6 but no IPv4, use IPv6
+			 * (covers ip6gre external with ARPHRD_NONE)
+			 */
+			if (!is_ip6 &&
+			    sockunion_family(&nbmanifp->afi[AFI_IP].addr)
+				    == AF_UNSPEC &&
+			    sockunion_family(&nbmanifp->afi[AFI_IP6].addr)
+				    != AF_UNSPEC)
+				is_ip6 = true;
+
+			if (is_ip6 && sockunion_family(
+					&nbmanifp->afi[AFI_IP6].addr)
+				    != AF_UNSPEC)
+				nbma = nbmanifp->afi[AFI_IP6].addr;
+			else
+				nbma = nbmanifp->afi[AFI_IP].addr;
+		}
 		nhrp_interface_update_mtu(ifp, AFI_IP);
 		if (!nhrp_if_collect_md(nifp))
 			nhrp_interface_update_source(ifp);
@@ -337,6 +366,17 @@ static void nhrp_interface_update_address(struct interface *ifp, afi_t afi,
 		}
 		if (!(best->flags & ZEBRA_IFA_SECONDARY)
 		    && (c->flags & ZEBRA_IFA_SECONDARY))
+			continue;
+		/* Prefer global IPv6 over link-local for NBMA */
+		if (family == AF_INET6
+		    && IN6_IS_ADDR_LINKLOCAL(&best->address->u.prefix6)
+		    && !IN6_IS_ADDR_LINKLOCAL(&c->address->u.prefix6)) {
+			best = c;
+			continue;
+		}
+		if (family == AF_INET6
+		    && !IN6_IS_ADDR_LINKLOCAL(&best->address->u.prefix6)
+		    && IN6_IS_ADDR_LINKLOCAL(&c->address->u.prefix6))
 			continue;
 		if (best->address->prefixlen > c->address->prefixlen) {
 			best = c;
