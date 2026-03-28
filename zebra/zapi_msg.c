@@ -3883,7 +3883,7 @@ static inline void zebra_gre_get(ZAPI_HANDLER_ARGS)
 
 		stream_putl(s, idx);
 		stream_putl(s, gre_info->ikey);
-		stream_putl(s, gre_info->ikey);
+		stream_putl(s, gre_info->okey);
 		stream_putl(s, gre_info->ifindex_link);
 
 		ifp_link = if_lookup_by_index_per_ns(
