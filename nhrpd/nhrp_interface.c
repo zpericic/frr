@@ -225,16 +225,17 @@ void nhrp_interface_update_nbma(struct interface *ifp,
 	if (nifp->source)
 		nbmaifp = if_lookup_by_name(nifp->source, VRF_DEFAULT);
 
-	if (ifp->ll_type != ZEBRA_LLT_IPGRE)
+	if (ifp->ll_type != ZEBRA_LLT_IPGRE && !gre_info) {
 		debugf(NHRP_DEBUG_IF, "%s: Ignoring non GRE interface type %u",
 		       __func__, ifp->ll_type);
-	else {
+	} else {
 		if (!gre_info) {
 			nhrp_send_zebra_gre_request(ifp);
 			return;
 		}
 		nifp->i_grekey = gre_info->ikey;
 		nifp->o_grekey = gre_info->okey;
+		nifp->collect_md = gre_info->collect_md;
 		saddr.s_addr = gre_info->vtep_ip.s_addr;
 
 		/*
@@ -249,9 +250,9 @@ void nhrp_interface_update_nbma(struct interface *ifp,
 				nifp->link_vrf_id = gre_info->vrfid_link;
 		}
 
-		debugf(NHRP_DEBUG_IF, "%s: GRE: ikey=%x okey=%x link=%x saddr=%x",
-		       ifp->name, nifp->i_grekey, nifp->o_grekey,
-		       nifp->link_idx, saddr.s_addr);
+		debugf(NHRP_DEBUG_IF, "%s: GRE: ikey=%x okey=%x link=%x saddr=%x collect_md=%d",
+		       ifp->name, nifp->i_grekey, nifp->o_grekey, 
+			   nifp->link_idx, saddr.s_addr, nifp->collect_md);
 		if (saddr.s_addr)
 			sockunion_set(&nbma, AF_INET,
 				      (uint8_t *)&saddr.s_addr,
@@ -260,6 +261,10 @@ void nhrp_interface_update_nbma(struct interface *ifp,
 			nbmaifp =
 				if_lookup_by_index(nifp->link_idx,
 						   nifp->link_vrf_id);
+
+		if (!nbmaifp && nifp->collect_md && nifp->source)
+			nbmaifp = if_lookup_by_name(nifp->source,
+						    VRF_DEFAULT);
 	}
 
 	if (nbmaifp)
@@ -286,7 +291,8 @@ void nhrp_interface_update_nbma(struct interface *ifp,
 		if (sockunion_family(&nbma) == AF_UNSPEC)
 			nbma = nbmanifp->afi[AFI_IP].addr;
 		nhrp_interface_update_mtu(ifp, AFI_IP);
-		nhrp_interface_update_source(ifp);
+		if (!nhrp_if_collect_md(nifp))
+			nhrp_interface_update_source(ifp);
 	}
 
 	if (!sockunion_same(&nbma, &nifp->nbma)) {
