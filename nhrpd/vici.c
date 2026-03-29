@@ -144,8 +144,11 @@ struct handle_sa_ctx {
 	uint32_t child_uniqueid, ike_uniqueid;
 	struct {
 		union sockunion host;
-		struct blob id, cert;
-	} local, remote;
+	} local;
+	struct {
+		union sockunion host;
+		struct blob id;
+	} remote;
 };
 
 static void parse_sa_message(struct vici_message_ctx *ctx,
@@ -182,21 +185,9 @@ static void parse_sa_message(struct vici_message_ctx *ctx,
 				vc = nhrp_vc_get(&sactx->local.host,
 						 &sactx->remote.host, 1);
 				if (vc) {
-					blob2buf(&sactx->local.id, vc->local.id,
-						 sizeof(vc->local.id));
-					if (blob2buf(&sactx->local.cert,
-						     (char *)vc->local.cert,
-						     sizeof(vc->local.cert)))
-						vc->local.certlen =
-							sactx->local.cert.len;
 					blob2buf(&sactx->remote.id,
 						 vc->remote.id,
 						 sizeof(vc->remote.id));
-					if (blob2buf(&sactx->remote.cert,
-						     (char *)vc->remote.cert,
-						     sizeof(vc->remote.cert)))
-						vc->remote.certlen =
-							sactx->remote.cert.len;
 					sactx->kill_ikesa |=
 						nhrp_vc_ipsec_updown(
 							sactx->child_uniqueid,
@@ -229,12 +220,6 @@ static void parse_sa_message(struct vici_message_ctx *ctx,
 							EC_NHRP_SWAN,
 							"VICI: bad strongSwan local-host: %s",
 							buf);
-			} else if (blob_equal(key, "local-id")
-				   && ctx->nsections == 1) {
-				sactx->local.id = *val;
-			} else if (blob_equal(key, "local-cert-data")
-				   && ctx->nsections == 1) {
-				sactx->local.cert = *val;
 			}
 			break;
 		case 'r':
@@ -251,9 +236,6 @@ static void parse_sa_message(struct vici_message_ctx *ctx,
 			} else if (blob_equal(key, "remote-id")
 				   && ctx->nsections == 1) {
 				sactx->remote.id = *val;
-			} else if (blob_equal(key, "remote-cert-data")
-				   && ctx->nsections == 1) {
-				sactx->remote.cert = *val;
 			}
 			break;
 		case 'u':
