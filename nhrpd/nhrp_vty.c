@@ -174,9 +174,6 @@ static int nhrp_config_write(struct vty *vty)
 	vty_out(vty, "!\n");
 #endif /* NO_DEBUG */
 
-	if (nhrp_event_socket_path) {
-		vty_out(vty, "nhrp event socket %s\n", nhrp_event_socket_path);
-	}
 	if (netlink_nflog_group) {
 		vty_out(vty, "nhrp nflog-group %d\n", netlink_nflog_group);
 	}
@@ -203,29 +200,6 @@ static const char *afi_to_cmd(afi_t afi)
 	if (afi == AFI_IP6)
 		return "ipv6";
 	return "ip";
-}
-
-DEFUN(nhrp_event_socket, nhrp_event_socket_cmd,
-	"nhrp event socket SOCKET",
-	NHRP_STR
-	"Event Manager commands\n"
-	"Event Manager unix socket path\n"
-	"Unix path for the socket\n")
-{
-	evmgr_set_socket(argv[3]->arg);
-	return CMD_SUCCESS;
-}
-
-DEFUN(no_nhrp_event_socket, no_nhrp_event_socket_cmd,
-	"no nhrp event socket [SOCKET]",
-	NO_STR
-	NHRP_STR
-	"Event Manager commands\n"
-	"Event Manager unix socket path\n"
-	"Unix path for the socket\n")
-{
-	evmgr_set_socket(NULL);
-	return CMD_SUCCESS;
 }
 
 DEFUN(nhrp_nflog_group, nhrp_nflog_group_cmd,
@@ -1327,8 +1301,6 @@ void nhrp_config_init(void)
 	install_element(CONFIG_NODE, &debug_nhrp_cmd);
 	install_element(CONFIG_NODE, &no_debug_nhrp_cmd);
 
-	install_element(CONFIG_NODE, &nhrp_event_socket_cmd);
-	install_element(CONFIG_NODE, &no_nhrp_event_socket_cmd);
 	install_element(CONFIG_NODE, &nhrp_nflog_group_cmd);
 	install_element(CONFIG_NODE, &no_nhrp_nflog_group_cmd);
 	install_element(CONFIG_NODE, &nhrp_multicast_nflog_group_cmd);

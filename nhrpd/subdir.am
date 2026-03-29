@@ -14,7 +14,6 @@ nhrpd_nhrpd_SOURCES = \
 	nhrpd/netlink_arp.c \
 	nhrpd/nhrp_cache.c \
 	nhrpd/nhrp_errors.c \
-	nhrpd/nhrp_event.c \
 	nhrpd/nhrp_interface.c \
 	nhrpd/nhrp_main.c \
 	nhrpd/nhrp_nhs.c \

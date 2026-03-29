@@ -88,7 +88,6 @@ static FRR_NORETURN void nhrp_request_stop(void)
 	nhrp_nhs_terminate();
 	nhrp_zebra_terminate();
 	vici_terminate();
-	evmgr_terminate();
 	nhrp_interface_terminate();
 	vrf_terminate();
 	nhrp_vc_terminate();
@@ -99,7 +98,6 @@ static FRR_NORETURN void nhrp_request_stop(void)
 
 	resolver_terminate();
 	nhrp_reqid_terminate(&nhrp_packet_reqid);
-	nhrp_reqid_terminate(&nhrp_event_reqid);
 	frr_fini();
 
 	exit(0);
@@ -165,7 +163,6 @@ int main(int argc, char **argv)
 	nhrpd_privs.change(ZPRIVS_RAISE);
 
 	os_route_socket();
-	evmgr_init();
 	nhrp_vc_init();
 	nhrp_packet_init();
 	vici_init();
