@@ -92,10 +92,7 @@ static void nhrp_vc_update(struct nhrp_vc *vc, long cmd)
 
 static void nhrp_vc_ipsec_reset(struct nhrp_vc *vc)
 {
-	vc->local.id[0] = 0;
-	vc->local.certlen = 0;
 	vc->remote.id[0] = 0;
-	vc->remote.certlen = 0;
 }
 
 int nhrp_vc_ipsec_updown(uint32_t child_id, struct nhrp_vc *vc)
