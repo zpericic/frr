@@ -144,10 +144,12 @@ struct nhrp_vc {
 
 	struct nhrp_vc_peer {
 		union sockunion nbma;
+	} local;
+
+	struct {
+		union sockunion nbma;
 		char id[MAX_ID_LENGTH];
-		uint16_t certlen;
-		uint8_t cert[MAX_CERT_LENGTH];
-	} local, remote;
+	} remote;
 };
 
 enum nhrp_route_type {
