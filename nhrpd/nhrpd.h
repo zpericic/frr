@@ -195,7 +195,6 @@ struct nhrp_reqid {
 };
 
 extern struct nhrp_reqid_pool nhrp_packet_reqid;
-extern struct nhrp_reqid_pool nhrp_event_reqid;
 
 enum nhrp_cache_type {
 	NHRP_CACHE_INVALID = 0,
@@ -487,13 +486,6 @@ void vici_terminate_vc_by_ike_id(unsigned int ike_id);
 void vici_request_vc(const char *profile, union sockunion *src,
 		     union sockunion *dst, int prio);
 
-extern const char *nhrp_event_socket_path;
-
-void evmgr_init(void);
-void evmgr_terminate(void);
-void evmgr_set_socket(const char *socket);
-void evmgr_notify(const char *name, struct nhrp_cache *c,
-		  void (*cb)(struct nhrp_reqid *, void *));
 
 struct nhrp_packet_header *nhrp_packet_push(struct zbuf *zb, uint8_t type,
 					    const union sockunion *src_nbma,

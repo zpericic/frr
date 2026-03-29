@@ -389,8 +389,6 @@ static void nhrp_cache_authorize_binding(struct nhrp_reqid *r, void *arg)
 	debugf(NHRP_DEBUG_COMMON, "cache: %s %pSU: %s", c->ifp->name,
 	       &c->remote_addr, (const char *)arg);
 
-	nhrp_reqid_free(&nhrp_event_reqid, r);
-
 	if (arg && strcmp(arg, "accept") == 0) {
 		bool use_collect_md = nhrp_cache_use_collect_md(c);
 
@@ -451,12 +449,9 @@ static void nhrp_cache_newpeer_notifier(struct notifier_block *n,
 
 	switch (cmd) {
 	case NOTIFY_PEER_UP:
-		if (nhrp_peer_check(c->new.peer, 1)) {
-			evmgr_notify("authorize-binding", c,
-				     nhrp_cache_authorize_binding);
-			event_add_timer(master, nhrp_cache_do_auth_timeout, c,
-					10, &c->t_auth);
-		}
+		if (nhrp_peer_check(c->new.peer, 1))
+			nhrp_cache_authorize_binding(&c->eventid,
+						     (void *)"accept");
 		break;
 	case NOTIFY_PEER_DOWN:
 	case NOTIFY_PEER_IFCONFIG_CHANGED:
