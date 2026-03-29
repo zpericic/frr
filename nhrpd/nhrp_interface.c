@@ -249,8 +249,9 @@ void nhrp_interface_update_nbma(struct interface *ifp,
 				nifp->link_vrf_id = gre_info->vrfid_link;
 		}
 
-		debugf(NHRP_DEBUG_IF, "%s: GRE: %x %x %x", ifp->name,
-		       nifp->i_grekey, nifp->link_idx, saddr.s_addr);
+		debugf(NHRP_DEBUG_IF, "%s: GRE: ikey=%x okey=%x link=%x saddr=%x",
+		       ifp->name, nifp->i_grekey, nifp->o_grekey,
+		       nifp->link_idx, saddr.s_addr);
 		if (saddr.s_addr)
 			sockunion_set(&nbma, AF_INET,
 				      (uint8_t *)&saddr.s_addr,
