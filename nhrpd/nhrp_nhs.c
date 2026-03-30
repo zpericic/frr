@@ -245,6 +245,57 @@ static void nhrp_reg_send_req(struct event *t)
 	zbuf_free(zb);
 }
 
+void nhrp_nhs_send_purge(struct interface *ifp, afi_t afi,
+			 const union sockunion *proto_addr)
+{
+	struct nhrp_interface *nifp = ifp->info;
+	struct nhrp_afi_data *if_ad = &nifp->afi[afi];
+	struct nhrp_nhs *nhs;
+	struct nhrp_registration *reg;
+
+	frr_each (nhrp_nhslist, &if_ad->nhslist_head, nhs) {
+		frr_each (nhrp_reglist, &nhs->reglist_head, reg) {
+			if (!reg->peer)
+				continue;
+
+			union sockunion *dst_proto = &nhs->proto_addr;
+
+			if (sockunion_family(dst_proto) == AF_UNSPEC)
+				dst_proto = &if_ad->addr;
+
+			struct zbuf *zb = zbuf_alloc(1500);
+			struct nhrp_packet_header *hdr;
+
+			hdr = nhrp_packet_push(zb,
+					       NHRP_PACKET_PURGE_REQUEST,
+					       &nifp->nbma, &if_ad->addr,
+					       dst_proto);
+			hdr->hop_count = 255;
+			hdr->flags = htons(NHRP_FLAG_PURGE_NO_REPLY);
+
+			struct nhrp_cie_header *cie;
+
+			cie = nhrp_cie_push(zb, 0, NULL, proto_addr);
+			if (cie) {
+				cie->prefix_length =
+					8 * sockunion_get_addrlen(proto_addr);
+				cie->mtu = 0;
+				cie->holding_time = 0;
+			}
+
+			nhrp_packet_complete(zb, hdr, ifp);
+			nhrp_peer_send(reg->peer, zb);
+			zbuf_free(zb);
+
+			debugf(NHRP_DEBUG_COMMON,
+			       "NHS: Sent Purge-Request for %pSU to %pSU",
+			       proto_addr, dst_proto);
+
+			break; /* one purge per NHS is enough */
+		}
+	}
+}
+
 static void nhrp_reg_delete(struct nhrp_registration *r)
 {
 	nhrp_peer_notify_del(r->peer, &r->peer_notifier);
