@@ -220,6 +220,15 @@ struct nhrp_cache_config {
 	union sockunion nbma;
 };
 
+PREDECL_DLIST(nhrp_resolverlist);
+
+struct nhrp_cache_resolver {
+	struct nhrp_resolverlist_item resolverlist_entry;
+	union sockunion nbma;
+	union sockunion proto;
+	struct interface *ifp;
+};
+
 struct nhrp_cache {
 	struct interface *ifp;
 	union sockunion remote_addr;
@@ -236,6 +245,8 @@ struct nhrp_cache {
 	struct event *t_timeout;
 	struct event *t_auth;
 
+	struct nhrp_resolverlist_head resolvers;
+
 	struct {
 		enum nhrp_cache_type type;
 		union sockunion remote_nbma_natoa;
@@ -246,6 +257,8 @@ struct nhrp_cache {
 		int holding_time;
 	} cur, new;
 };
+
+DECLARE_DLIST(nhrp_resolverlist, struct nhrp_cache_resolver, resolverlist_entry);
 
 struct nhrp_shortcut {
 	struct prefix *p;
@@ -403,6 +416,8 @@ void nhrp_nhs_foreach(struct interface *ifp, afi_t afi,
 				 void *),
 		      void *ctx);
 void nhrp_nhs_interface_del(struct interface *ifp);
+void nhrp_nhs_send_purge(struct interface *ifp, afi_t afi,
+			 const union sockunion *proto_addr);
 
 int nhrp_multicast_add(struct interface *ifp, afi_t afi,
 		       union sockunion *nbma_addr);
@@ -454,6 +469,8 @@ int nhrp_cache_update_binding(struct nhrp_cache *, enum nhrp_cache_type type,
 			      union sockunion *claimed_nbma);
 void nhrp_cache_notify_add(struct nhrp_cache *c, struct notifier_block *n, notifier_fn_t fn);
 void nhrp_cache_notify_del(struct nhrp_cache *c, struct notifier_block *n);
+void nhrp_cache_add_resolver(struct nhrp_cache *c, const union sockunion *nbma,
+			     const union sockunion *proto, struct interface *ifp);
 
 void nhrp_vc_init(void);
 void nhrp_vc_terminate(void);
