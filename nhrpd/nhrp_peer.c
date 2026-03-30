@@ -885,6 +885,73 @@ static void nhrp_handle_traffic_ind(struct nhrp_packet_parser *p)
 		nhrp_shortcut_initiate(&dst);
 }
 
+static void nhrp_handle_purge_request(struct nhrp_packet_parser *pp)
+{
+	struct interface *ifp = pp->ifp;
+	struct zbuf *zb, payload;
+	struct nhrp_packet_header *hdr;
+	struct nhrp_cie_header *cie;
+	struct nhrp_extension_header *ext;
+	struct nhrp_cache *c;
+	union sockunion cie_nbma, cie_proto, *proto_addr;
+	size_t paylen;
+	void *pay;
+
+	debugf(NHRP_DEBUG_COMMON, "Received Purge Request from %pSU",
+	       &pp->src_proto);
+
+	/* Build reply — copy payload before CIE parsing consumes zbuf */
+	zb = zbuf_alloc(1500);
+	hdr = nhrp_packet_push(zb, NHRP_PACKET_PURGE_REPLY, &pp->src_nbma,
+			       &pp->src_proto, &pp->dst_proto);
+	hdr->flags = pp->hdr->flags;
+	hdr->u.request_id = pp->hdr->u.request_id;
+
+	/* Copy payload verbatim, then parse CIEs from copy */
+	paylen = zbuf_used(&pp->payload);
+	pay = zbuf_pushn(zb, paylen);
+	if (!pay)
+		goto err;
+	memcpy(pay, zbuf_pulln(&pp->payload, paylen), paylen);
+	zbuf_init(&payload, pay, paylen, paylen);
+
+	/* Invalidate matching cache entries */
+	while ((cie = nhrp_cie_pull(&payload, hdr, &cie_nbma, &cie_proto))) {
+		proto_addr = (sockunion_family(&cie_proto) == AF_UNSPEC)
+				     ? &pp->src_proto
+				     : &cie_proto;
+		c = nhrp_cache_get(ifp, proto_addr, 0);
+		if (c && c->cur.type > NHRP_CACHE_INCOMPLETE &&
+		    c->cur.type < NHRP_CACHE_STATIC) {
+			debugf(NHRP_DEBUG_COMMON, "Purge: invalidating %pSU",
+			       proto_addr);
+			nhrp_cache_update_binding(c, c->cur.type, -1, NULL, 0,
+						  NULL, NULL);
+		}
+	}
+
+	/* Send reply unless N flag set */
+	if (pp->hdr->flags & htons(NHRP_FLAG_PURGE_NO_REPLY))
+		goto err;
+
+	/* Extensions */
+	while ((ext = nhrp_ext_pull(&pp->extensions, &payload))) {
+		switch (htons(ext->type) & ~NHRP_EXTENSION_FLAG_COMPULSORY) {
+		case NHRP_EXTENSION_AUTHENTICATION:
+			break;
+		default:
+			if (nhrp_ext_reply(zb, hdr, ifp, ext, &payload) < 0)
+				goto err;
+			break;
+		}
+	}
+
+	nhrp_packet_complete(zb, hdr, ifp);
+	nhrp_peer_send(pp->peer, zb);
+err:
+	zbuf_free(zb);
+}
+
 enum packet_type_t {
 	PACKET_UNKNOWN = 0,
 	PACKET_REQUEST,
@@ -927,6 +994,7 @@ static struct {
 			    {
 				    .type = PACKET_REQUEST,
 				    .name = "Purge-Request",
+				    .handler = nhrp_handle_purge_request,
 			    },
 		    [NHRP_PACKET_PURGE_REPLY] =
 			    {
