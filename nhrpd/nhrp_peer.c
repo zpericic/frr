@@ -557,6 +557,10 @@ static void nhrp_handle_resolution_req(struct nhrp_packet_parser *pp)
 		}
 
 		cie->code = NHRP_CODE_SUCCESS;
+
+		/* Track requester for NHS-initiated purge */
+		nhrp_cache_add_resolver(c, &pp->src_nbma,
+					&pp->src_proto, ifp);
 	}
 
 	/* Create reply */

@@ -1111,6 +1111,10 @@ static void clear_nhrp_cache(struct nhrp_cache *c, void *data)
 	struct info_ctx *ctx = data;
 
 	if (c->cur.type <= NHRP_CACHE_DYNAMIC) {
+		/* Send purge to NHS before invalidating */
+		afi_t afi = family2afi(sockunion_family(&c->remote_addr));
+
+		nhrp_nhs_send_purge(c->ifp, afi, &c->remote_addr);
 		nhrp_cache_update_binding(c, c->cur.type, -1, NULL, 0, NULL,
 					  NULL);
 		if (ctx)
