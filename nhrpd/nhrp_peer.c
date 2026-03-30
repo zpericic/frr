@@ -834,7 +834,7 @@ void nhrp_peer_send_indication(struct interface *ifp, uint16_t protocol_type,
 	zb = zbuf_alloc(1500);
 	hdr = nhrp_packet_push(zb, NHRP_PACKET_TRAFFIC_INDICATION, &nifp->nbma,
 			       &if_ad->addr, &dst);
-	hdr->hop_count = 1;
+	hdr->hop_count = 255;
 
 	/* Payload is the packet causing indication */
 	zbuf_copy(zb, pkt, zbuf_used(pkt));
@@ -1176,7 +1176,7 @@ static int nhrp_packet_send_error(struct nhrp_packet_parser *pp,
 	hdr->u.error.code = htons(indication_code);
 	hdr->u.error.offset = htons(offset);
 	hdr->flags = pp->hdr->flags;
-	hdr->hop_count = 0; /* XXX: cisco returns 255 */
+	hdr->hop_count = 255;
 
 	/* Payload is the packet causing error */
 	/* Don`t add extension according to RFC */
