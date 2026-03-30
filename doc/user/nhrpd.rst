@@ -451,3 +451,103 @@ FRR config on Spoke3
     network 172.16.3.0/24
    exit-address-family
 
+Dual-Hub Configuration
+======================
+
+For redundancy, DMVPN can be deployed with two (or more) hubs in a single
+GRE cloud. There are two patterns for hub-to-hub connectivity:
+
+Cisco-style (asymmetric)
+   Hub2 registers with Hub1 using ``ip nhrp nhs``. Hub1 discovers Hub2
+   dynamically via the registration. Only Hub2 needs configuration pointing
+   to Hub1. An optional ``ip nhrp map`` can be added for immediate data-plane
+   reachability before the registration completes.
+
+OpenNHRP-style (symmetric)
+   Both hubs use ``ip nhrp map`` to statically map each other's tunnel IP to
+   NBMA address. No NHS registration between hubs. This was the original
+   pattern used by OpenNHRP on Alpine Linux.
+
+Both patterns are supported. Spokes register with all hubs independently using
+multiple ``ip nhrp nhs`` lines.
+
+Dual-Hub Cisco-style Example
+-----------------------------
+
+Topology: Hub1 (198.51.100.1) and Hub2 (198.51.100.2) on the same NBMA
+network. Hub2 registers with Hub1. Spokes register with both.
+
+Hub1 (primary) -- pure hub, no NHS configuration needed:
+
+.. code-block:: frr
+
+  nhrp nflog-group 1
+  !
+  interface gre1
+   ip address 10.0.0.1/32
+   ip nhrp network-id 1
+   ip nhrp redirect
+   ip nhrp registration no-unique
+   tunnel source eth0
+
+Hub2 (secondary) -- registers with Hub1:
+
+.. code-block:: frr
+
+  nhrp nflog-group 1
+  !
+  interface gre1
+   ip address 10.0.0.2/32
+   ip nhrp network-id 1
+   ip nhrp redirect
+   ip nhrp registration no-unique
+   ip nhrp nhs 10.0.0.1 nbma 198.51.100.1
+   tunnel source eth0
+
+Optionally, add a static map for immediate data-plane connectivity before
+the registration completes:
+
+.. code-block:: frr
+
+   ip nhrp map 10.0.0.1 198.51.100.1
+
+Spokes -- register with both hubs:
+
+.. code-block:: frr
+
+  interface gre1
+   ip address 10.0.0.10/32
+   ip nhrp network-id 1
+   ip nhrp nhs dynamic nbma 198.51.100.1
+   ip nhrp nhs dynamic nbma 198.51.100.2
+   ip nhrp redirect
+   ip nhrp registration no-unique
+   ip nhrp shortcut
+   tunnel source eth0
+  !
+  ip route 0.0.0.0/0 10.0.0.1 50
+  ip route 0.0.0.0/0 10.0.0.2 60
+
+The weighted default routes provide failover: if Hub1 becomes unreachable
+(its NHRP host route is withdrawn), traffic falls through to Hub2.
+
+Dual-Hub OpenNHRP-style Example
+-------------------------------
+
+Both hubs statically map each other. No NHS registration between hubs.
+
+Hub1:
+
+.. code-block:: frr
+
+  interface gre1
+   ip nhrp map 10.0.0.2 198.51.100.2
+
+Hub2:
+
+.. code-block:: frr
+
+  interface gre1
+   ip nhrp map 10.0.0.1 198.51.100.1
+
+Spoke configuration is the same as the Cisco-style example above.
