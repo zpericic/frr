@@ -32,6 +32,8 @@ struct ipv6hdr {
 };
 
 static void nhrp_packet_debug(struct zbuf *zb, const char *dir);
+static int nhrp_packet_send_error(struct nhrp_packet_parser *pp,
+				  uint16_t indication_code, uint16_t offset);
 
 static void nhrp_peer_check_delete(struct nhrp_peer *p)
 {
@@ -444,7 +446,7 @@ static void nhrp_handle_resolution_req(struct nhrp_packet_parser *pp)
 
 	if (!(pp->if_ad->flags & NHRP_IFF_SHORTCUT)) {
 		debugf(NHRP_DEBUG_COMMON, "Shortcuts disabled");
-		/* FIXME: Send error indication? */
+		nhrp_packet_send_error(pp, NHRP_ERROR_PROTOCOL_ADDRESS_UNREACHABLE, 0);
 		return;
 	}
 
@@ -1003,8 +1005,10 @@ static void nhrp_peer_forward(struct nhrp_peer *p,
 						     &cie_nbma,
 						     &cie_protocol) != NULL) {
 					if (sockunion_same(&p->vc->remote.nbma,
-							   &cie_nbma))
+							   &cie_nbma)) {
+						nhrp_packet_send_error(pp, NHRP_ERROR_LOOP_DETECTED, 0);
 						goto err;
+					}
 				}
 				/* Append our selves to the list */
 				cie = nhrp_cie_push(zb, NHRP_CODE_SUCCESS,
@@ -1306,6 +1310,7 @@ void nhrp_peer_recv(struct nhrp_peer *p, struct zbuf *zb)
 			&vc->remote.nbma, (int)hdr->type, (int)hdr->version,
 			(int)nbma_afi, (int)htons(hdr->protocol_type),
 			(int)htons(hdr->packet_size), (int)realsize);
+		nhrp_packet_send_error(&pp, NHRP_ERROR_PROTOCOL_ERROR, 0);
 		goto drop;
 	}
 	pp.if_ad = &((struct nhrp_interface *)ifp->info)->afi[proto_afi];
@@ -1374,7 +1379,7 @@ void nhrp_peer_recv(struct nhrp_peer *p, struct zbuf *zb)
 				break;
 			} else {
 				nhrp_packet_debug(zb, "!UNKNOWN-REQID");
-				/* FIXME: send error-indication */
+				nhrp_packet_send_error(&pp, NHRP_ERROR_INVALID_RESOLUTION_REPLY, 0);
 			}
 		}
 		fallthrough; /* FIXME: double check, is this correct? */
@@ -1393,6 +1398,7 @@ void nhrp_peer_recv(struct nhrp_peer *p, struct zbuf *zb)
 		nhrp_peer_forward(peer, &pp);
 		break;
 	case NHRP_ROUTE_BLACKHOLE:
+		nhrp_packet_send_error(&pp, NHRP_ERROR_PROTOCOL_ADDRESS_UNREACHABLE, 0);
 		break;
 	}
 
