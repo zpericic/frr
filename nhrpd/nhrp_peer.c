@@ -548,6 +548,7 @@ static void nhrp_handle_resolution_req(struct nhrp_packet_parser *pp)
 		}
 
 		cie->code = NHRP_CODE_SUCCESS;
+		c->authoritative = 1;
 
 		/* Track requester for NHS-initiated purge */
 		nhrp_cache_add_resolver(c, &pp->src_nbma,
@@ -711,6 +712,7 @@ static void nhrp_handle_registration_request(struct nhrp_packet_parser *p)
 			cie->code = NHRP_CODE_ADMINISTRATIVELY_PROHIBITED;
 			continue;
 		}
+		c->authoritative = 1;
 
 		cie->code = NHRP_CODE_SUCCESS;
 	}

@@ -329,6 +329,7 @@ static void nhrp_shortcut_recv_resolution_rep(struct nhrp_reqid *reqid,
 						  htons(cie->mtu),
 						  nbma,
 						  &cie_nbma);
+			c->authoritative = 0;
 		} else {
 			debugf(NHRP_DEBUG_COMMON,
 			       "Shortcut: no cache for proto %pSU", proto);
