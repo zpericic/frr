@@ -8,12 +8,16 @@
 #include "frrevent.h"
 #include "hash.h"
 #include "nhrpd.h"
+#include "nhrp_protocol.h"
 
 #include "netlink.h"
 #include "os.h"
 
 DEFINE_MTYPE_STATIC(NHRPD, NHRP_CACHE, "NHRP cache entry");
 DEFINE_MTYPE_STATIC(NHRPD, NHRP_CACHE_CONFIG, "NHRP cache config entry");
+DEFINE_MTYPE_STATIC(NHRPD, NHRP_CACHE_RESOLVER, "NHRP cache resolver entry");
+
+static void nhrp_cache_send_purge_to_resolvers(struct nhrp_cache *c);
 
 static void nhrp_cache_reset_new(struct nhrp_cache *c);
 
@@ -59,6 +63,7 @@ static void *nhrp_cache_alloc(void *data)
 		.notifier_list =
 		NOTIFIER_LIST_INITIALIZER(&p->notifier_list),
 	};
+	nhrp_resolverlist_init(&p->resolvers);
 	nhrp_cache_counts[p->cur.type]++;
 
 	return p;
@@ -87,6 +92,12 @@ static void nhrp_cache_free(struct nhrp_cache *c)
 	nhrp_peer_unref(c->cur.peer);
 	nhrp_cache_reset_new(c);
 	event_cancel(&c->t_timeout);
+
+	struct nhrp_cache_resolver *resolver;
+
+	while ((resolver = nhrp_resolverlist_pop(&c->resolvers)))
+		XFREE(MTYPE_NHRP_CACHE_RESOLVER, resolver);
+
 	XFREE(MTYPE_NHRP_CACHE, c);
 }
 
@@ -394,6 +405,10 @@ static void nhrp_cache_authorize_binding(struct nhrp_reqid *r, void *arg)
 		bool use_collect_md = nhrp_cache_use_collect_md(c);
 
 		if (c->cur.peer) {
+			/* Purge resolvers if binding is changing */
+			if (c->cur.peer != c->new.peer)
+				nhrp_cache_send_purge_to_resolvers(c);
+
 			if (!use_collect_md)
 				netlink_update_binding(c->cur.peer->ifp,
 						       &c->remote_addr, NULL);
@@ -638,4 +653,70 @@ void nhrp_cache_notify_add(struct nhrp_cache *c, struct notifier_block *n,
 void nhrp_cache_notify_del(struct nhrp_cache *c, struct notifier_block *n)
 {
 	notifier_del(n, &c->notifier_list);
+}
+
+void nhrp_cache_add_resolver(struct nhrp_cache *c, const union sockunion *nbma,
+			     const union sockunion *proto, struct interface *ifp)
+{
+	struct nhrp_cache_resolver *r;
+
+	/* Update existing entry if same NBMA */
+	frr_each (nhrp_resolverlist, &c->resolvers, r) {
+		if (sockunion_same(&r->nbma, nbma)) {
+			r->proto = *proto;
+			r->ifp = ifp;
+			return;
+		}
+	}
+
+	r = XMALLOC(MTYPE_NHRP_CACHE_RESOLVER,
+		     sizeof(struct nhrp_cache_resolver));
+	r->nbma = *nbma;
+	r->proto = *proto;
+	r->ifp = ifp;
+	nhrp_resolverlist_add_tail(&c->resolvers, r);
+}
+
+static void nhrp_cache_send_purge_to_resolvers(struct nhrp_cache *c)
+{
+	struct nhrp_cache_resolver *r;
+	struct nhrp_interface *nifp = c->ifp->info;
+	afi_t afi = family2afi(sockunion_family(&c->remote_addr));
+	struct nhrp_afi_data *if_ad = &nifp->afi[afi];
+
+	frr_each (nhrp_resolverlist, &c->resolvers, r) {
+		struct nhrp_peer *peer = nhrp_peer_get(c->ifp, &r->nbma);
+
+		if (!peer)
+			continue;
+
+		struct zbuf *zb = zbuf_alloc(1500);
+		struct nhrp_packet_header *hdr;
+
+		hdr = nhrp_packet_push(zb, NHRP_PACKET_PURGE_REQUEST,
+				       &nifp->nbma, &if_ad->addr, &r->proto);
+		hdr->hop_count = 255;
+		hdr->flags = 0;
+
+		/* CIE: the purged protocol address */
+		struct nhrp_cie_header *cie;
+
+		cie = nhrp_cie_push(zb, 0, NULL, &c->remote_addr);
+		if (cie) {
+			cie->prefix_length = 8 * sockunion_get_addrlen(
+							&c->remote_addr);
+			cie->mtu = 0;
+			cie->holding_time = 0;
+		}
+
+		nhrp_packet_complete(zb, hdr, c->ifp);
+		nhrp_peer_send(peer, zb);
+		zbuf_free(zb);
+
+		debugf(NHRP_DEBUG_COMMON,
+		       "Purge: sent Purge-Request for %pSU to %pSU",
+		       &c->remote_addr, &r->proto);
+
+		nhrp_peer_unref(peer);
+	}
 }
