@@ -526,6 +526,68 @@ def test_hub1_down_spoke_failover():
     ping_test(host, "10.5.5.5", 1000, "via hub2 after hub1 down")
 
 
+def test_purge_on_clear():
+    """
+    Clear cache on nhc1, verify Purge-Request sent to NHS,
+    hub sees it, and nhc1 re-registers.
+    """
+    tgen = get_topogen()
+    if tgen.routers_have_failure():
+        pytest.skip(tgen.errors)
+
+    # Bring hub1 back up if down from previous test
+    shutdown_bringup_interface(tgen, "hub1", "hub1-gre0", True)
+
+    nhc1 = tgen.gears["nhc1"]
+    hub1 = tgen.gears["hub1"]
+
+    # Wait for nhc1 registered on hub1
+    expected_nhc1 = {
+        "table": [
+            {
+                "interface": "hub1-gre0",
+                "type": "dynamic",
+                "protocol": "172.16.1.4",
+            },
+        ]
+    }
+    test_func = partial(
+        topotest.router_json_cmp,
+        hub1,
+        "show ip nhrp cache json",
+        expected_nhc1,
+    )
+    _, result = topotest.run_and_expect(test_func, None, count=40, wait=0.5)
+    assertmsg = '"hub1" does not have nhc1 registered before purge test'
+    assert result is None, assertmsg
+
+    logger.info("Clearing NHRP cache on nhc1")
+    nhc1.vtysh_cmd("clear ip nhrp cache")
+
+    # Verify hub1 logs show Purge-Request received
+    def check_purge_log(router, rname):
+        log = router.net.cmd_raises(
+            "grep -c 'Purge-Request' /tmp/{}/var/log/frr/frr.log || true".format(
+                rname
+            )
+        ).strip()
+        count = int(log) if log.isdigit() else 0
+        if count > 0:
+            return None
+        return "no Purge-Request in log"
+
+    _, result = topotest.run_and_expect(
+        partial(check_purge_log, hub1, "hub1"), None, count=20, wait=0.5
+    )
+    assertmsg = '"hub1" did not receive Purge-Request from nhc1'
+    assert result is None, assertmsg
+
+    # Verify nhc1 re-registers with hub1
+    _, result = topotest.run_and_expect(test_func, None, count=40, wait=0.5)
+    assertmsg = '"hub1" nhc1 did not re-register after cache clear'
+    assert result is None, assertmsg
+
+
 def test_memory_leak():
     tgen = get_topogen()
     if not tgen.is_memleak_enabled():
