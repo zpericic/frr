@@ -200,7 +200,7 @@ static void nhrp_reg_send_req(struct event *t)
 	zb = zbuf_alloc(1400);
 	hdr = nhrp_packet_push(zb, NHRP_PACKET_REGISTRATION_REQUEST,
 			       &nifp->nbma, &if_ad->addr, dst_proto);
-	hdr->hop_count = 1;
+	hdr->hop_count = 255;
 	if (!(if_ad->flags & NHRP_IFF_REG_NO_UNIQUE))
 		hdr->flags |= htons(NHRP_FLAG_REGISTRATION_UNIQUE);
 

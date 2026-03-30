@@ -1,0 +1,67 @@
+{
+    "10.5.5.0\/24": [
+        {
+            "prefix": "10.5.5.0\/24",
+            "protocol": "nhrp",
+            "selected": true,
+            "installed": true,
+            "nexthops": [
+                {
+                    "fib": true,
+                    "ip": "172.16.1.5",
+                    "afi": "ipv4",
+                    "interfaceName": "nhc1-gre0",
+                    "active": true
+                }
+            ]
+        }
+    ],
+    "172.16.1.1\/32": [
+        {
+            "prefix": "172.16.1.1\/32",
+            "protocol": "nhrp",
+            "selected": true,
+            "installed": true,
+            "nexthops": [
+                {
+                    "fib": true,
+                    "directlyConnected": true,
+                    "interfaceName": "nhc1-gre0",
+                    "active": true
+                }
+            ]
+        }
+    ],
+    "172.16.1.2\/32": [
+        {
+            "prefix": "172.16.1.2\/32",
+            "protocol": "nhrp",
+            "selected": true,
+            "installed": true,
+            "nexthops": [
+                {
+                    "fib": true,
+                    "directlyConnected": true,
+                    "interfaceName": "nhc1-gre0",
+                    "active": true
+                }
+            ]
+        }
+    ],
+    "172.16.1.5\/32": [
+        {
+            "prefix": "172.16.1.5\/32",
+            "protocol": "nhrp",
+            "selected": true,
+            "installed": true,
+            "nexthops": [
+                {
+                    "fib": true,
+                    "directlyConnected": true,
+                    "interfaceName": "nhc1-gre0",
+                    "active": true
+                }
+            ]
+        }
+    ]
+}

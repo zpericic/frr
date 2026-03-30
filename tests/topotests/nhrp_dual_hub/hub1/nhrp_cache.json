@@ -1,0 +1,31 @@
+{
+    "attr": {
+        "entriesCount": 4
+    },
+    "table": [
+        {
+            "interface": "hub1-gre0",
+            "type": "local",
+            "protocol": "172.16.1.1",
+            "nbma": "192.168.1.1"
+        },
+        {
+            "interface": "hub1-gre0",
+            "type": "dynamic",
+            "protocol": "172.16.1.2",
+            "nbma": "192.168.1.2"
+        },
+        {
+            "interface": "hub1-gre0",
+            "type": "dynamic",
+            "protocol": "172.16.1.4",
+            "nbma": "192.168.2.4"
+        },
+        {
+            "interface": "hub1-gre0",
+            "type": "dynamic",
+            "protocol": "172.16.1.5",
+            "nbma": "192.168.2.5"
+        }
+    ]
+}

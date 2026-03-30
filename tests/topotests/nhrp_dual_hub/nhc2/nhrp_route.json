@@ -1,0 +1,34 @@
+{
+    "172.16.1.1\/32": [
+        {
+            "prefix": "172.16.1.1\/32",
+            "protocol": "nhrp",
+            "selected": true,
+            "installed": true,
+            "nexthops": [
+                {
+                    "fib": true,
+                    "directlyConnected": true,
+                    "interfaceName": "nhc2-gre0",
+                    "active": true
+                }
+            ]
+        }
+    ],
+    "172.16.1.2\/32": [
+        {
+            "prefix": "172.16.1.2\/32",
+            "protocol": "nhrp",
+            "selected": true,
+            "installed": true,
+            "nexthops": [
+                {
+                    "fib": true,
+                    "directlyConnected": true,
+                    "interfaceName": "nhc2-gre0",
+                    "active": true
+                }
+            ]
+        }
+    ]
+}
