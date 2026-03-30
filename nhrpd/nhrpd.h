@@ -237,6 +237,7 @@ struct nhrp_cache {
 	unsigned used : 1;
 	unsigned route_installed : 1;
 	unsigned nhrp_route_installed : 1;
+	unsigned authoritative : 1;
 
 	struct notifier_block peer_notifier;
 	struct notifier_block newpeer_notifier;
