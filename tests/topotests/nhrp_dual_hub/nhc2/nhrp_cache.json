@@ -1,0 +1,25 @@
+{
+    "attr": {
+        "entriesCount": 3
+    },
+    "table": [
+        {
+            "interface": "nhc2-gre0",
+            "type": "local",
+            "protocol": "172.16.1.5",
+            "nbma": "192.168.2.5"
+        },
+        {
+            "interface": "nhc2-gre0",
+            "type": "nhs",
+            "protocol": "172.16.1.1",
+            "nbma": "192.168.1.1"
+        },
+        {
+            "interface": "nhc2-gre0",
+            "type": "nhs",
+            "protocol": "172.16.1.2",
+            "nbma": "192.168.1.2"
+        }
+    ]
+}
