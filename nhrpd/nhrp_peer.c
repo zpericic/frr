@@ -748,8 +748,7 @@ static void nhrp_handle_registration_request(struct nhrp_packet_parser *p)
 		}
 	}
 
-	/* auth ext was validated and copied from the request */
-	nhrp_packet_complete_auth(zb, hdr, ifp, false);
+	nhrp_packet_complete_auth(zb, hdr, ifp, true);
 	nhrp_peer_send(p->peer, zb);
 err:
 	zbuf_free(zb);
@@ -1083,11 +1082,11 @@ static void nhrp_peer_forward(struct nhrp_peer *p,
 			 */
 			break;
 		default:
-			if (htons(ext->type) & NHRP_EXTENSION_FLAG_COMPULSORY)
-				/* FIXME: RFC says to just copy, but not
-				 * append our selves to the transit NHS list
-				 */
-				goto err;
+			if (htons(ext->type) & NHRP_EXTENSION_FLAG_COMPULSORY) {
+				/* RFC 2332 §5.3.3: copy unknown compulsory extensions */
+				zbuf_copy(zb, &extpl, len);
+				break;
+			}
 			fallthrough;
 		case NHRP_EXTENSION_RESPONDER_ADDRESS:
 			/* Supported compulsory extensions, and any
