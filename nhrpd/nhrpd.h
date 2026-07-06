@@ -458,7 +458,10 @@ void nhrp_vc_init(void);
 void nhrp_vc_terminate(void);
 struct nhrp_vc *nhrp_vc_get(const union sockunion *src,
 			    const union sockunion *dst, int create);
-int nhrp_vc_ipsec_updown(uint32_t child_id, struct nhrp_vc *vc);
+int nhrp_vc_ipsec_updown(uint32_t child_id, struct nhrp_vc *vc,
+			 uint32_t ike_uniqueid);
+void nhrp_vc_ike_down(uint32_t ike_uniqueid);
+void nhrp_vc_ike_rekey(uint32_t old_uniqueid, uint32_t new_uniqueid);
 void nhrp_vc_notify_add(struct nhrp_vc *vc, struct notifier_block *n, notifier_fn_t fn);
 void nhrp_vc_notify_del(struct nhrp_vc *vc, struct notifier_block *n);
 void nhrp_vc_foreach(void (*cb)(struct nhrp_vc *, void *), void *ctx);

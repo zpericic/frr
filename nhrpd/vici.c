@@ -198,11 +198,13 @@ static void parse_sa_message(struct vici_message_ctx *ctx,
 					sactx->kill_ikesa |=
 						nhrp_vc_ipsec_updown(
 							sactx->child_uniqueid,
-							vc);
+							vc,
+							sactx->ike_uniqueid);
 					vc->ike_uniqueid = sactx->ike_uniqueid;
 				}
 			} else {
-				nhrp_vc_ipsec_updown(sactx->child_uniqueid, 0);
+				nhrp_vc_ipsec_updown(sactx->child_uniqueid,
+						     NULL, 0);
 			}
 		}
 		break;
@@ -318,6 +320,114 @@ static void vici_recv_sa(struct vici_conn *vici, struct zbuf *msg)
 	}
 }
 
+struct handle_ike_updown_ctx {
+	struct vici_message_ctx msgctx;
+	int up;
+	uint32_t ike_uniqueid;
+};
+
+static void parse_ike_updown_message(struct vici_message_ctx *ctx,
+				     enum vici_type_t msgtype,
+				     const struct blob *key,
+				     const struct blob *val)
+{
+	struct handle_ike_updown_ctx *ictx =
+		container_of(ctx, struct handle_ike_updown_ctx, msgctx);
+	char buf[32];
+
+	switch (msgtype) {
+	case VICI_KEY_VALUE:
+		if (!key || !key->ptr)
+			break;
+		if (blob_equal(key, "up") && ctx->nsections == 0)
+			ictx->up = 1;
+		else if (blob_equal(key, "uniqueid") && ctx->nsections == 1
+			 && blob2buf(val, buf, sizeof(buf)))
+			ictx->ike_uniqueid = strtoul(buf, NULL, 0);
+		break;
+	case VICI_START:
+	case VICI_SECTION_START:
+	case VICI_SECTION_END:
+	case VICI_LIST_START:
+	case VICI_LIST_ITEM:
+	case VICI_LIST_END:
+	case VICI_END:
+		break;
+	}
+}
+
+static void vici_recv_ike_updown(struct vici_conn *vici, struct zbuf *msg)
+{
+	struct handle_ike_updown_ctx ctx = {
+		.msgctx.nsections = 0
+	};
+
+	vici_parse_message(vici, msg, parse_ike_updown_message, &ctx.msgctx);
+
+	/* charon raises no child-updown events when a whole IKE_SA is
+	 * torn down (only ike-updown, without the "up" key). Mark all
+	 * child SAs of the IKE_SA down. Deletion of a rekeyed IKE_SA
+	 * does not raise this event; its children live on.
+	 */
+	if (!ctx.up)
+		nhrp_vc_ike_down(ctx.ike_uniqueid);
+}
+
+struct handle_ike_rekey_ctx {
+	struct vici_message_ctx msgctx;
+	int in_new;
+	uint32_t old_uniqueid, new_uniqueid;
+};
+
+static void parse_ike_rekey_message(struct vici_message_ctx *ctx,
+				    enum vici_type_t msgtype,
+				    const struct blob *key,
+				    const struct blob *val)
+{
+	struct handle_ike_rekey_ctx *ictx =
+		container_of(ctx, struct handle_ike_rekey_ctx, msgctx);
+	char buf[32];
+
+	switch (msgtype) {
+	case VICI_SECTION_START:
+		if (ctx->nsections == 1)
+			ictx->in_new = blob_equal(key, "new");
+		break;
+	case VICI_KEY_VALUE:
+		if (!key || !key->ptr)
+			break;
+		if (blob_equal(key, "uniqueid") && ctx->nsections == 2
+		    && blob2buf(val, buf, sizeof(buf))) {
+			if (ictx->in_new)
+				ictx->new_uniqueid = strtoul(buf, NULL, 0);
+			else
+				ictx->old_uniqueid = strtoul(buf, NULL, 0);
+		}
+		break;
+	case VICI_START:
+	case VICI_SECTION_END:
+	case VICI_LIST_START:
+	case VICI_LIST_ITEM:
+	case VICI_LIST_END:
+	case VICI_END:
+		break;
+	}
+}
+
+static void vici_recv_ike_rekey(struct vici_conn *vici, struct zbuf *msg)
+{
+	struct handle_ike_rekey_ctx ctx = {
+		.msgctx.nsections = 0
+	};
+
+	vici_parse_message(vici, msg, parse_ike_rekey_message, &ctx.msgctx);
+
+	/* Children are adopted by the new IKE_SA without child-level
+	 * events; remap the tracked IKE_SA unique ids.
+	 */
+	nhrp_vc_ike_rekey(ctx.old_uniqueid, ctx.new_uniqueid);
+}
+
 static void vici_recv_message(struct vici_conn *vici, struct zbuf *msg)
 {
 	uint32_t msglen;
@@ -340,6 +450,10 @@ static void vici_recv_message(struct vici_conn *vici, struct zbuf *msg)
 		    || blob_equal(&name, "child-updown")
 		    || blob_equal(&name, "child-rekey"))
 			vici_recv_sa(vici, msg);
+		else if (blob_equal(&name, "ike-updown"))
+			vici_recv_ike_updown(vici, msg);
+		else if (blob_equal(&name, "ike-rekey"))
+			vici_recv_ike_rekey(vici, msg);
 		break;
 	case VICI_CMD_RESPONSE:
 		vici_parse_message(vici, msg, parse_cmd_response, &ctx);
@@ -348,7 +462,7 @@ static void vici_recv_message(struct vici_conn *vici, struct zbuf *msg)
 	case VICI_CMD_UNKNOWN:
 		flog_err(
 			EC_NHRP_SWAN,
-			"VICI: StrongSwan does not support mandatory events (unpatched?)");
+			"VICI: strongSwan does not support required events (version >= 5.3.3 needed)");
 		break;
 	case VICI_EVENT_CONFIRM:
 		break;
@@ -532,6 +646,8 @@ static void vici_reconnect(struct event *t)
 	/* Send event subscriptions */
 	vici_register_event(vici, "child-updown");
 	vici_register_event(vici, "child-rekey");
+	vici_register_event(vici, "ike-updown");
+	vici_register_event(vici, "ike-rekey");
 	vici_register_event(vici, "list-sa");
 	vici_submit_request(vici, "list-sas", VICI_END);
 }

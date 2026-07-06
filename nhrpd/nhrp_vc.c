@@ -19,6 +19,7 @@ PREDECL_DLIST(childlist);
 
 struct child_sa {
 	uint32_t id;
+	uint32_t ike_uniqueid;
 	struct nhrp_vc *vc;
 	struct childlist_item childlist_entry;
 };
@@ -98,7 +99,8 @@ static void nhrp_vc_ipsec_reset(struct nhrp_vc *vc)
 	vc->remote.certlen = 0;
 }
 
-int nhrp_vc_ipsec_updown(uint32_t child_id, struct nhrp_vc *vc)
+int nhrp_vc_ipsec_updown(uint32_t child_id, struct nhrp_vc *vc,
+			 uint32_t ike_uniqueid)
 {
 	struct child_sa *sa = NULL, *lsa;
 	uint32_t child_hash = child_id % array_size(childlist_head);
@@ -123,6 +125,9 @@ int nhrp_vc_ipsec_updown(uint32_t child_id, struct nhrp_vc *vc)
 		};
 		childlist_add_tail(&childlist_head[child_hash], sa);
 	}
+
+	if (ike_uniqueid)
+		sa->ike_uniqueid = ike_uniqueid;
 
 	if (sa->vc == vc)
 		return 0;
@@ -156,6 +161,44 @@ int nhrp_vc_ipsec_updown(uint32_t child_id, struct nhrp_vc *vc)
 	}
 
 	return abort_migration;
+}
+
+void nhrp_vc_ike_down(uint32_t ike_uniqueid)
+{
+	struct child_sa *sa;
+	size_t i;
+
+	if (!ike_uniqueid)
+		return;
+
+	for (i = 0; i < array_size(childlist_head); i++) {
+		frr_each_safe (childlist, &childlist_head[i], sa) {
+			if (sa->ike_uniqueid != ike_uniqueid)
+				continue;
+			if (sa->vc && sa->vc->ike_uniqueid == ike_uniqueid)
+				sa->vc->ike_uniqueid = 0;
+			nhrp_vc_ipsec_updown(sa->id, NULL, 0);
+		}
+	}
+}
+
+void nhrp_vc_ike_rekey(uint32_t old_uniqueid, uint32_t new_uniqueid)
+{
+	struct child_sa *sa;
+	size_t i;
+
+	if (!old_uniqueid || !new_uniqueid || old_uniqueid == new_uniqueid)
+		return;
+
+	for (i = 0; i < array_size(childlist_head); i++) {
+		frr_each (childlist, &childlist_head[i], sa) {
+			if (sa->ike_uniqueid != old_uniqueid)
+				continue;
+			sa->ike_uniqueid = new_uniqueid;
+			if (sa->vc && sa->vc->ike_uniqueid == old_uniqueid)
+				sa->vc->ike_uniqueid = new_uniqueid;
+		}
+	}
 }
 
 void nhrp_vc_notify_add(struct nhrp_vc *vc, struct notifier_block *n,
@@ -206,7 +249,7 @@ void nhrp_vc_reset(void)
 
 	for (i = 0; i < array_size(childlist_head); i++) {
 		frr_each_safe (childlist, &childlist_head[i], sa)
-			nhrp_vc_ipsec_updown(sa->id, 0);
+			nhrp_vc_ipsec_updown(sa->id, NULL, 0);
 	}
 }
 
